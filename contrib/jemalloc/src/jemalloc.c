@@ -1,5 +1,8 @@
 #define	JEMALLOC_C_
 #include "jemalloc/internal/jemalloc_internal.h"
+#ifdef CHERIGC
+#include <cherigc.h>
+#endif
 
 /******************************************************************************/
 /* Data. */
@@ -947,6 +950,9 @@ je_malloc(size_t size)
 	}
 	UTRACE(0, size, ret);
 	JEMALLOC_VALGRIND_MALLOC(ret != NULL, ret, usize, false);
+#ifdef CHERIGC
+	cherigc_notify_alloc(ret, size, 0);
+#endif
 	return (ret);
 }
 
