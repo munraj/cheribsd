@@ -570,6 +570,9 @@ main(void)
 		return (rc);
 	(void)do_libcheri_init;
 
+	rc = invoke_helper_cap(sandbox_object_getobject(cheri_gc_test_objectp));
+	printf("rc from invoke_helper: %d\n", rc);
+
 	(void)do_bintree_test;
 	(void)do_linked_list_test;
 	(void)do_revoke_test;

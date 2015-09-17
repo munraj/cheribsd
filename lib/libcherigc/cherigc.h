@@ -399,6 +399,7 @@ int			 cherigc_get_object_start_large(
 			    struct cherigc_vment **_cep);
 
 /* Callback from the actual allocator. */
+__attribute__((weak))
 void			 cherigc_notify_alloc(void *_p, size_t _sz,
 			    int _flags);
 
