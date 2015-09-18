@@ -1,7 +1,8 @@
 # $FreeBSD$
 
 PROG=cheri_gc_test
-SRCS=gc_test.c
+SRCS=gc_test.c								\
+	gc_test_libcheri_classes.S
 
 OBJDIR=${MAKEOBJDIRPREFIX}
 

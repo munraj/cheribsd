@@ -1,30 +1,103 @@
-#include <sys/mman.h>
-
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <sys/param.h>
+#include <sys/mman.h>
+#include <sys/sysctl.h>
+
+#include <err.h>
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <machine/cheri.h>
 #include <machine/cheric.h>
 
+#include <cheri/cheri_class.h>
+#include <cheri/cheri_type.h>
 #include <cheri/sandbox.h>
+#include <cheri/sandbox_methods.h>
 
 #include <cherigc.h>
-
-struct cheri_object cheri_gc_test;
-#define	CHERI_GC_TEST_CCALL						\
-	__attribute__((cheri_ccall))					\
-	__attribute__((cheri_method_suffix("_cap")))			\
-	__attribute__((cheri_method_class(cheri_gc_test)))
-CHERI_GC_TEST_CCALL int	invoke_helper(void);
-struct sandbox_class	*cheri_gc_test_classp;
-struct sandbox_object	*cheri_gc_test_objectp;
 
 struct node {
 	int v;
 	__capability void *hash;
 	__capability struct node *l, *r;
 };
+
+static void	*malloc_wrapped(size_t size);
+
+/* Helper sandbox (for ambient -> sandbox calls). */
+struct cheri_object cheri_gc_test;
+#define	CHERI_GC_TEST_CCALL						\
+	__attribute__((cheri_ccall))					\
+	__attribute__((cheri_method_suffix("_cap")))			\
+	__attribute__((cheri_method_class(cheri_gc_test)))
+CHERI_GC_TEST_CCALL int	invoke_helper(struct cheri_object cheri_gc);
+struct sandbox_class	*cheri_gc_test_classp;
+struct sandbox_object	*cheri_gc_test_objectp;
+
+/* GC object (for sandbox -> ambient calls). */
+extern struct cheri_object cheri_gc_object;
+#define	CHERI_GC_OBJECT_CCALL						\
+	__attribute__((cheri_ccallee))					\
+	__attribute__((cheri_method_suffix("_c")))			\
+	__attribute__((cheri_method_class(cheri_gc_object)))
+CHERI_GC_OBJECT_CCALL __capability void	*cheri_gc_object_malloc(
+					    size_t size);
+CHERI_CLASS_DECL(cheri_gc_object);
+static __capability void	*cheri_gc_object_type;
+__capability intptr_t		*cheri_gc_object_vtable;
+struct cheri_gc_object {
+	CHERI_SYSTEM_OBJECT_FIELDS;
+};
+int	cheri_gc_object_new(struct cheri_object *cop);
+struct cheri_object		cheri_gc;
+static struct sandbox_provided_classes	*cheri_gc_object_provided_classes;
+static struct sandbox_required_methods	*cheri_gc_object_required_methods;
+
+int
+cheri_gc_object_new(struct cheri_object *cop)
+{
+	struct cheri_gc_object *cgp;
+
+	cgp = calloc(1, sizeof(*cgp));
+	if (cgp == NULL)
+		return (-1);
+	CHERI_SYSTEM_OBJECT_INIT(cgp, cheri_gc_object_vtable);
+
+	cop->co_codecap = cheri_setoffset(cheri_getpcc(),
+	    (register_t)CHERI_CLASS_ENTRY(cheri_gc_object));
+	cop->co_codecap = cheri_seal(cop->co_codecap,
+	    cheri_gc_object_type);
+	cop->co_datacap = cheri_ptrperm(cgp, sizeof(*cgp),
+	    CHERI_PERM_GLOBAL | CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP |
+	    CHERI_PERM_STORE | CHERI_PERM_STORE_CAP);
+	cop->co_datacap = cheri_seal(cop->co_datacap, cheri_gc_object_type);
+
+	return (0);
+}
+
+static __attribute__ ((constructor)) void
+cheri_gc_object_init(void)
+{
+
+	cheri_gc_object_type = cheri_type_alloc();
+}
+
+__capability void *
+cheri_gc_object_malloc(size_t size)
+{
+	void *p;
+
+	fprintf(stderr, "cheri_gc_object_malloc called\n");
+	p = malloc_wrapped(size);
+	if (p != NULL)
+		return (cheri_ptr(p, size));
+	else
+		return (NULL);
+}
 
 static void *
 malloc_wrapped(size_t size)
@@ -538,11 +611,53 @@ do_revoke_test(void)
 	return (0);
 }
 
+/* XXX: Copied from sandbox_program_init() in libcheri/sandbox.c. */
+static int
+cheri_gc_object_init_vtable(void)
+{
+	int fd = -1;
+	int mib[4];
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PATHNAME;
+	mib[3] = -1;
+	char buf[MAXPATHLEN];
+	size_t cb = sizeof(buf);
+
+	/* XXXBD: do this with RTLD or hypothentical getexecfd(). */
+	if ((sysctl(mib, 4, buf, &cb, NULL, 0) != -1) && cb > 0) {
+		if ((fd = open(buf, O_RDONLY)) == -1)
+			warn("%s: open %s (from kern.proc.pathname.(-1))",
+			    __func__, buf);
+	}
+
+	if (sandbox_parse_ccall_methods(fd,
+	    &cheri_gc_object_provided_classes,
+	    &cheri_gc_object_required_methods) == -1) {
+		warn("%s: sandbox_parse_ccall_methods for cheri_gc_object",
+		    __func__);
+		close(fd);
+		return (-1);
+	}
+	if (sandbox_set_required_method_variables(cheri_getdefault(),
+	    cheri_gc_object_required_methods) == -1) {
+		warnx("%s: sandbox_set_required_method_variables for "
+		    "cheri_gc_object", __func__);
+		return (-1);
+	}
+	cheri_gc_object_vtable = sandbox_make_vtable(NULL,
+	    "cheri_gc_object", cheri_gc_object_provided_classes);
+	close(fd);
+	return (0);
+
+}
+
 static int
 do_libcheri_init(void)
 {
 	int rc;
 
+	/* Initialize sandbox (for ambient -> sandbox calls). */
 	rc = sandbox_class_new("/tmp2/cheri_gc_test-helper",
 	    4 * 1024 * 1024, &cheri_gc_test_classp);
 	if (rc != 0) {
@@ -554,6 +669,22 @@ do_libcheri_init(void)
 	    &cheri_gc_test_objectp);
 	if (rc != 0) {
 		fprintf(stderr, "sandbox_object_new: %d\n", rc);
+		return (rc);
+	}
+
+	/* Initialize a GC object (for sandbox -> ambient calls). */
+	/*
+	 * The vtable stuff is global and only requires initialization
+	 * once.
+	 */
+	rc = cheri_gc_object_init_vtable();
+	if (rc != 0) {
+		fprintf(stderr, "cheri_gc_object_init_vtable: %d\n", rc);
+		return (rc);
+	}
+	rc = cheri_gc_object_new(&cheri_gc);
+	if (rc != 0) {
+		fprintf(stderr, "cheri_gc_object_new: %d\n", rc);
 		return (rc);
 	}
 
@@ -570,7 +701,9 @@ main(void)
 		return (rc);
 	(void)do_libcheri_init;
 
-	rc = invoke_helper_cap(sandbox_object_getobject(cheri_gc_test_objectp));
+	printf("call invoke_helper\n");
+	rc = invoke_helper_cap(sandbox_object_getobject(cheri_gc_test_objectp),
+	    cheri_gc);
 	printf("rc from invoke_helper: %d\n", rc);
 
 	(void)do_bintree_test;
@@ -584,26 +717,26 @@ main(void)
 __unused static int
 old_main(void)
 {
-#define	MAX	10
+#define	PPMAX	10
 	int i, j;
-	__capability void *p, *pp[MAX];
+	__capability void *p, *pp[PPMAX];
 
 	fprintf(stderr, "hello\n");
 
 	volatile __capability void *reg2 = cheri_ptr((void *)0xDEADBEE, 0x34343434);
 	__asm__ __volatile__ ("cmove $c4, %0" : : "C"(reg2) : "memory", "$c4");
 
-	for (i = 0; i < MAX; i++) {
+	for (i = 0; i < PPMAX; i++) {
 		if (i == 25)
 			fprintf(stderr, "added %p\n", mmap(NULL, 100, PROT_READ, MAP_ANON, -1, 0));
 		p = cheri_ptr(malloc_wrapped(i * 500), i);
 		pp[i] = p;
 		fprintf(stderr, "[%d] %p\n", i, (void *)p);
 		if (i>1) *(__capability void **)((uintptr_t)p & ~(uintptr_t)31) = cheri_ptr((void *)0x1234, 0x5678);
-		if (i == MAX - 1) {
+		if (i == PPMAX - 1) {
 			*(__capability void **)p = cheri_ptr((void *)0x1234, 0x5678);
-			for (j = 0; j < MAX; j++)
-				((__capability void **)pp[MAX - 1])[j + 1] = cheri_ptr((void *)pp[j], j);
+			for (j = 0; j < PPMAX; j++)
+				((__capability void **)pp[PPMAX - 1])[j + 1] = cheri_ptr((void *)pp[j], j);
 		}
 	}
 
@@ -611,7 +744,7 @@ old_main(void)
 	__asm__ __volatile__ ("cmove $c4, %0" : : "C"(reg) : "memory", "$c4");
 	__asm__ __volatile__ ("" ::: "memory");
 	cherigc_collect();
-	//cherigc_scan_region((void *)pp[MAX - 1], CHERIGC_PAGESIZE);
+	//cherigc_scan_region((void *)pp[PPMAX - 1], CHERIGC_PAGESIZE);
 
 	(void)reg;
 	return (0);
