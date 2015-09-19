@@ -21,6 +21,7 @@ struct cheri_object cheri_gc_object;
 	__attribute__((cheri_method_class(cheri_gc_object)))
 CHERI_GC_OBJECT_CCALL __capability void	*cheri_gc_object_malloc(
 					    size_t size);
+CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_collect(void);
 
 int	invoke(void) __attribute__((cheri_ccall));
 int
@@ -33,10 +34,16 @@ invoke(void)
 int
 invoke_helper(struct cheri_object cheri_gc)
 {
+	void *p;
 
 	printf("start inside invoke_helper %lx\n", cheri_getoffset(cheri_gc.co_codecap));
-	(void)cheri_gc_object_malloc_c(cheri_gc, 100);
-	printf("test from inside invoke_helper\n");
+	p = cheri_gc_object_malloc_c(cheri_gc, 100);
+	printf("(in sandbox) malloc gave ptr: %lx\n", cheri_getbase(p));
+	printf("(in sandbox) ptr tag: %lu\n", cheri_gettag(p));
+
+	printf("(in sandbox) perform collection\n");
+	(void)cheri_gc_object_collect_c(cheri_gc);
+	printf("(in sandbox) done. pointer tag now: %lu\n", cheri_gettag(p));
 
 	return (1234789);
 }

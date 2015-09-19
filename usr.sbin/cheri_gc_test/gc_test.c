@@ -46,6 +46,7 @@ extern struct cheri_object cheri_gc_object;
 	__attribute__((cheri_method_class(cheri_gc_object)))
 CHERI_GC_OBJECT_CCALL __capability void	*cheri_gc_object_malloc(
 					    size_t size);
+CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_collect(void);
 CHERI_CLASS_DECL(cheri_gc_object);
 static __capability void	*cheri_gc_object_type;
 __capability intptr_t		*cheri_gc_object_vtable;
@@ -97,6 +98,14 @@ cheri_gc_object_malloc(size_t size)
 		return (cheri_ptr(p, size));
 	else
 		return (NULL);
+}
+
+int
+cheri_gc_object_collect(void)
+{
+
+	fprintf(stderr, "cheri_gc_object_collect called\n");
+	return (cherigc_collect());
 }
 
 static void *

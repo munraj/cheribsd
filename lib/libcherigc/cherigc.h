@@ -7,6 +7,9 @@
 /* Configurable fixed-size revoke list stack (in bytes). */
 #define	CHERIGC_REVOKE_LIST_SIZE	CHERIGC_PAGESIZE
 
+/* Configurable fixed-size unmanaged objects list stack (in bytes). */
+#define	CHERIGC_UNMANAGED_LIST_SIZE	CHERIGC_PAGESIZE
+
 #define	CHERIGC_FREE_FILL		0x0DE1E7ED
 
 /*
@@ -38,6 +41,7 @@
 #define	CHERIGC_PTR_CLRTAG(p)	cheri_cleartag(CHERIGC_CAP_DEREF(p))
 #define	CHERIGC_PTR_GETTAG(p)	cheri_gettag(CHERIGC_CAP_DEREF(p))
 #define	CHERIGC_PTR_GETBASE(p)	cheri_getbase(CHERIGC_CAP_DEREF(p))
+#define	CHERIGC_PTR_GETLEN(p)	cheri_getlen(CHERIGC_CAP_DEREF(p))
 #define	CHERIGC_PTR_GETOFFSET(p) cheri_getoffset(CHERIGC_CAP_DEREF(p))
 #include <machine/cheri.h>
 #include <machine/cheric.h>
@@ -77,7 +81,10 @@ struct cherigc_caps {
 struct cherigc_stack_entry {
 	void		*cse_ptr;
 	size_t		cse_size;
+	uint64_t	cse_flags;
 };
+
+#define	CHERIGC_STACK_FL_UNMANAGED	1
 
 struct cherigc_stack {
 	struct cherigc_stack_entry	*cs_stack;
@@ -300,6 +307,11 @@ struct cherigc {
 	struct cherigc_caps	gc_stack;	/* saved stack */
 	struct cherigc_stack	gc_mark_stack;	/* stack of marked objs */
 	struct cherigc_stack	gc_revoked;	/* array of revoked objs */
+	/*
+	 * Array of marked unmanaged objs. Needed to detect cycles through
+	 * unmanaged objects.
+	 */
+	struct cherigc_stack	gc_unmanaged;
 	size_t			gc_capsize;
 	size_t			gc_pagesize;
 	struct cherigc_stats	gc_stats;
@@ -398,10 +410,29 @@ int			 cherigc_get_object_start_large(
 			    struct cherigc_vment *_ce, void *p,
 			    struct cherigc_vment **_cep);
 
-/* Callback from the actual allocator. */
+/*
+ * Allocator API.
+ *
+ * The allocator should call these functions to notify the collector of
+ * events.
+ *
+ * cherigc_notify_alloc: allocation event. This should be called after the
+ * allocation, or at least at such time where the pages for the allocation
+ * have been mmap()ed.
+ *
+ * cherigc_notify_free: free event. This should be called before the free.
+ * In this case the function will return CHERIGC_FREE_NOW or
+ * CHERIGC_FREE_DEFER; if CHERIG_FREE_DEFER is returned, the collector
+ * requires that the pointer remain allocated.
+ */
 __attribute__((weak))
 void			 cherigc_notify_alloc(void *_p, size_t _sz,
 			    int _flags);
+__attribute__((weak))
+int			 cherigc_notify_free(void *_p, int _flags);
+
+#define	CHERIGC_FREE_NOW	0
+#define	CHERIGC_FREE_DEFER	1
 
 /* Print tracking information (useful for debugging). */
 void			 cherigc_print_tracking(void);
@@ -466,12 +497,17 @@ int			 cherigc_mark_children(void *_p, size_t _sz,
 int			 cherigc_push_root(void *_p);
 int			 cherigc_pushable(void *_p);
 int			 cherigc_stack_push(struct cherigc_stack *_cs,
-			    void *_p, size_t _sz);
+			    void *_p, size_t _sz, uint64_t _flags);
 int			 cherigc_stack_isfull(struct cherigc_stack *_cs);
 int			 cherigc_stack_pop(struct cherigc_stack *_cs,
-			    void **_p, size_t *_sz);
+			    void **_p, size_t *_sz, uint64_t *_flags);
 int			 cherigc_isrevoked_small(struct cherigc_vment *_ce,
 			    size_t _idx);
+/* Scanning support for unmanaged objects. */
+int			 cherigc_unmanaged_ismarked(void *_base,
+			    size_t _sz);
+int			 cherigc_unmanaged_mark_and_push(void *_base,
+			    size_t _sz);
 
 /* Sweeping. */
 void			 cherigc_sweep(void);

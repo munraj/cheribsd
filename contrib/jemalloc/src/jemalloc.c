@@ -951,7 +951,8 @@ je_malloc(size_t size)
 	UTRACE(0, size, ret);
 	JEMALLOC_VALGRIND_MALLOC(ret != NULL, ret, usize, false);
 #ifdef CHERIGC
-	cherigc_notify_alloc(ret, size, 0);
+	if (cherigc_notify_alloc != NULL)
+		cherigc_notify_alloc(ret, size, 0);
 #endif
 	return (ret);
 }
@@ -1314,6 +1315,11 @@ void
 je_free(void *ptr)
 {
 
+#ifdef CHERIGC
+	if (cherigc_notify_free != NULL)
+		if (cherigc_notify_free(ptr, 0) == CHERIGC_FREE_DEFER)
+			return;
+#endif
 	UTRACE(ptr, 0, 0);
 	if (ptr != NULL)
 		ifree(ptr);

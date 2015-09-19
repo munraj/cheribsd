@@ -511,6 +511,12 @@ cherigc_init(void)
 	    cherigc->gc_revoked.cs_size);
 	cherigc_assert(cherigc->gc_revoked.cs_stack != NULL, "");
 
+	/* Initialize unmanaged objects list to fixed size. */
+	cherigc->gc_unmanaged.cs_size = CHERIGC_UNMANAGED_LIST_SIZE;
+	cherigc->gc_unmanaged.cs_stack = cherigc_internal_alloc(
+	    cherigc->gc_unmanaged.cs_size);
+	cherigc_assert(cherigc->gc_unmanaged.cs_stack != NULL, "");
+
 	cherigc->gc_stack.cc_cap = NULL;
 	cherigc->gc_stack.cc_size = 0;
 
@@ -990,6 +996,64 @@ ret:
 	cherigc->gc_nallocbytes += acsz;
 }
 
+int
+cherigc_notify_free(void *p, int flags)
+{
+	struct cherigc_vment *ce;
+	size_t idx;
+	int rc;
+	uint64_t before, after, diff;
+
+	(void)flags;
+
+	if (!cherigc_initialized)
+		return (CHERIGC_FREE_NOW);
+
+	if (CHERIGC_ISINGC)
+		return (CHERIGC_FREE_NOW);
+	CHERIGC_ENTERGC;
+
+	before = cherigc_gettime();
+
+	cherigc_get_regs();
+
+	/* Save registers. */
+
+	cherigc_printf("GC free: p=%p, tid=%d\n",
+	    p, cherigc_gettid());
+
+	if (p == NULL)
+		goto ret;
+
+	/* Just for debugging, to catch test failures and things. */
+	cherigc_assert(p != NULL, "");
+	/* The GC actually requires alignment. */
+	cherigc_assert(((uintptr_t)p & (CHERIGC_MINSIZE - 1)) == 0, "%zu",
+	    CHERIGC_MINSIZE);
+
+	/*
+	 * If the object doesn't exist, it may have been allocated before
+	 * the GC was initialized, so let it go.
+	 */
+	rc = cherigc_get_object_start(p, &ce, &idx);
+	if (rc != 0)
+		return (CHERIGC_FREE_NOW);
+
+	cherigc_assert(cherigc_revoke(p) == 0, "");
+
+ret:
+	cherigc_printf("(deferring %p)\n", p);
+	cherigc_put_regs();
+	CHERIGC_LEAVEGC;
+	after = cherigc_gettime();
+
+	diff = after - before;
+	//cherigc_time_printf(diff, "pause");
+	cherigc->gc_pausetime += diff;
+	//cherigc_time_printf(cherigc->gc_pausetime, "total pause");
+	return (CHERIGC_FREE_DEFER);
+}
+
 __capability void *
 cherigc_malloc(size_t sz)
 {
@@ -1010,6 +1074,8 @@ cherigc_collect(void)
 	cherigc_get_regs();
 
 	cherigc_printf("collection time!\n");
+	printf("vmap_update: %d\n", cherigc_vmap_update(&cherigc->gc_cv,
+	    &cherigc->gc_cvi));
 	cherigc_vmap_print(&cherigc->gc_cv, &cherigc->gc_cvi, 0,
 	    CHERIGC_FL_USED_ONLY | CHERIGC_FL_AMAP_COMPACT);
 
@@ -1021,6 +1087,9 @@ cherigc_collect(void)
 
 	/* Empty revoked objects list. */
 	cherigc->gc_revoked.cs_idx = 0;
+
+	/* Empty unmanaged objects list. */
+	cherigc->gc_unmanaged.cs_idx = 0;
 
 	rc = 0;
 ret:
@@ -1051,7 +1120,7 @@ cherigc_revoke(void *p)
 		cherigc_assert(!cherigc_stack_isfull(&cherigc->gc_revoked),
 		    "");
 		cherigc_assert(cherigc_stack_push(&cherigc->gc_revoked,
-		    p, sz) == 0, "");
+		    p, sz, 0) == 0, "");
 	} else
 		ce->ce_gctype |= CHERIGC_VMENT_PAGE_REVOKE;
 
@@ -1097,11 +1166,16 @@ cherigc_pushable(void *p)
 	if (!CHERIGC_PTR_GETTAG(p))
 		return (0);
 
+	/* Don't push the unlimited capability or NULL capabilities. */
+	if (CHERIGC_PTR_GETBASE(p) == 0)
+		return (0);
+
 	return (1);
 }
 
 int
-cherigc_stack_pop(struct cherigc_stack *cs, void **p, size_t *sz)
+cherigc_stack_pop(struct cherigc_stack *cs, void **p, size_t *sz,
+    uint64_t *flags)
 {
 
 	if (cs->cs_idx == 0)
@@ -1110,11 +1184,13 @@ cherigc_stack_pop(struct cherigc_stack *cs, void **p, size_t *sz)
 	cs->cs_idx--;
 	*p = cs->cs_stack[cs->cs_idx].cse_ptr;
 	*sz = cs->cs_stack[cs->cs_idx].cse_size;
+	*flags = cs->cs_stack[cs->cs_idx].cse_flags;
 	return (0);
 }
 
 int
-cherigc_stack_push(struct cherigc_stack *cs, void *p, size_t sz)
+cherigc_stack_push(struct cherigc_stack *cs, void *p, size_t sz,
+    uint64_t flags)
 {
 	void *t;
 	size_t cs_size;
@@ -1136,6 +1212,7 @@ cherigc_stack_push(struct cherigc_stack *cs, void *p, size_t sz)
 
 	cs->cs_stack[cs->cs_idx].cse_ptr = p;
 	cs->cs_stack[cs->cs_idx].cse_size = sz;
+	cs->cs_stack[cs->cs_idx].cse_flags = flags;
 	cs->cs_idx++;
 
 	return (0);
@@ -1155,16 +1232,28 @@ int
 cherigc_push_root(void *p)
 {
 	struct cherigc_vment *ce;
-	size_t idx;
-	uint8_t ent;
-	int isrevoked, rc;
 	void *q;
-	size_t sz;
+	size_t idx, sz;
+	int isrevoked, rc;
+	uint8_t ent;
 
-	q = (void *)CHERIGC_CAP_DEREF(p);
+	q = (void *)CHERIGC_PTR_GETBASE(p);
 
 	if (!cherigc_pushable(p))
 		return (0);
+
+	/*
+	 * If the object is already marked, we don't push it to the mark
+	 * stack again; if it is not marked, we push it to the mark stack,
+	 * and mark it. If the object is revoked, we then invalidate the
+	 * capability pointing to it.
+	 *
+	 * Objects differ in how we check for and set the mark and revoke
+	 * flags based on their type. There are three basic types: small,
+	 * large and unmanaged. For unmanaged objects: 1) we don't have a
+	 * revoke bit, 2) marking them is slow and is only necessary to
+	 * avoid cycles, and 3) they are never swept.
+	 */
 
 	/*
 	 * XXX: Merge this into one call to a get_size that also returns ce
@@ -1172,7 +1261,19 @@ cherigc_push_root(void *p)
 	 */
 	rc = cherigc_get_object_start(q, &ce, &idx);
 	if (rc != 0) {
-		cherigc_printf("ignoring root %p (not found)\n", q);
+		/* Unmanaged object. */
+		sz = CHERIGC_PTR_GETLEN(p);
+		cherigc_printf("unmanaged root %p, size %zu\n", q, sz);
+		if (cherigc_unmanaged_ismarked(q, sz)) {
+			/* Already marked. */
+			cherigc_printf("(unmanaged) root %p already marked (unmanaged cycle)\n", q);
+		} else {
+			/* Unmarked. */
+			rc = cherigc_unmanaged_mark_and_push(q, sz);
+			if (rc != 0)
+				return (rc);
+			cherigc_printf("just marked (unmanaged) root %p\n", q);
+		}
 		return (0);
 	}
 	rc = cherigc_get_size(q, &q, &sz);
@@ -1187,7 +1288,9 @@ cherigc_push_root(void *p)
 			/*
 			 * Root should not be pointing to unused memory;
 			 * invalidate.
-			 * XXX: Check writable.
+			 * 
+			 * XXX: TODO: Check writable, check still owned by
+			 * jemalloc, etc.
 			 */
 			cherigc_printf(
 			    "(small) root %p is pointing to unused memory!\n", q);
@@ -1199,9 +1302,8 @@ cherigc_push_root(void *p)
 			/* Unmarked. */
 			CHERIGC_ASETMARK(&ce->ce_amap, idx);
 			cherigc->gc_nmark++;
-			/* XXX: Push to mark stack, etc. */
 			rc = cherigc_stack_push(
-			    &cherigc->gc_mark_stack, q, sz);
+			    &cherigc->gc_mark_stack, q, sz, 0);
 			if (rc != 0)
 				return (rc);
 			cherigc_printf("just marked (small) root %p\n", q);
@@ -1228,9 +1330,8 @@ cherigc_push_root(void *p)
 			/* Unmarked. */
 			ce->ce_gctype |= CHERIGC_VMENT_PAGE_MARK;
 			cherigc->gc_nmark++;
-			/* XXX: Push to mark stack, etc. */
 			rc = cherigc_stack_push(
-			    &cherigc->gc_mark_stack, q, sz);
+			    &cherigc->gc_mark_stack, q, sz, 0);
 			if (rc != 0)
 				return (rc);
 			cherigc_printf("just marked (large) root %p\n", q);
@@ -1254,9 +1355,10 @@ cherigc_push_root(void *p)
 int
 cherigc_mark_all(cherigc_examine_fn *fn, void *ctx)
 {
-	int rc;
 	void *p;
 	size_t sz;
+	int rc;
+	uint64_t flags;
 
 	rc = cherigc_get_ts();
 	if (rc != 0)
@@ -1294,12 +1396,15 @@ cherigc_mark_all(cherigc_examine_fn *fn, void *ctx)
 
 	/* 2) Recursive mark. */
 	for (;;) {
-		rc = cherigc_stack_pop(&cherigc->gc_mark_stack, &p, &sz);
+		rc = cherigc_stack_pop(&cherigc->gc_mark_stack, &p, &sz,
+		    &flags);
 		if (rc != 0) {
 			/* Mark stack empty. */
 			break;
 		}
-		cherigc_printf("mark_all: stack_pop %p\n", p);
+		if (flags & CHERIGC_STACK_FL_UNMANAGED)
+			cherigc_printf("note: %p is unmanaged\n", p);
+		cherigc_printf("mark_all: stack_pop %p, %zu bytes\n", p, sz);
 		rc = cherigc_mark_children(p, sz, fn, ctx);
 		if (rc != 0) {
 			cherigc_printf("mark_children failed\n");
@@ -1330,6 +1435,113 @@ cherigc_isrevoked_small(struct cherigc_vment *ce, size_t idx)
 		if (p == q)
 			return (1);
 	}
+	return (0);
+}
+
+int
+cherigc_unmanaged_ismarked(void *base, size_t sz)
+{
+	size_t i;
+	uint64_t p, q;
+
+	/*
+	 * The size is important. If this reference covers a larger region,
+	 * then we need to scan the larger size.
+	 */
+
+	p = (uint64_t)base;
+	for (i = 0; i < cherigc->gc_unmanaged.cs_idx; i++) {
+		q = (uint64_t)cherigc->gc_unmanaged.cs_stack[i].cse_ptr;
+		if (p == q &&
+		    sz <= cherigc->gc_unmanaged.cs_stack[i].cse_size)
+			return (1);
+	}
+
+	return (0);
+}
+
+int
+cherigc_unmanaged_mark_and_push(void *base, size_t sz)
+{
+	struct cherigc_vment *ce;
+	int rc;
+	size_t off, max;
+
+	/*
+	 * Here we atomically mark the unmanaged object and push it to the
+	 * mark stack.
+	 *
+	 * Note that since this object is unmanaged, we should only scan
+	 * those pages that are mapped and also readable.
+	 *
+	 * For the mapped+readable check we use our cached VM page
+	 * table stuff.
+	 */
+
+	/* XXX: Perhaps just let this grow dynamically. */
+	cherigc_assert(!cherigc_stack_isfull(&cherigc->gc_unmanaged), "");
+
+	/* Remember that this has been marked. */
+	rc = cherigc_stack_push(&cherigc->gc_unmanaged, base, sz, 0);
+	if (rc != 0)
+		return (rc);
+
+	cherigc_printf("total bytes to push: %zu\n", sz);
+
+	/*
+	 * Push it to the mark stack one page at a time, checking for each
+	 * page whether we can read from it using cached VM information.
+	 */
+#define	CE_GOOD(ce) ((ce) != NULL && ((ce)->ce_prot & CHERIGC_PROT_RD))
+#define	UNMANAGED_PUSH(p, sz) do {					\
+		rc = cherigc_stack_push(&cherigc->gc_mark_stack, (p),	\
+		    (sz), CHERIGC_STACK_FL_UNMANAGED);			\
+		if (rc != 0)						\
+			return (rc);					\
+} while (0)
+	off = (uintptr_t)base & CHERIGC_PAGEMASK;
+	/* First page. */
+	if (off + sz > CHERIGC_PAGESIZE)
+		max = CHERIGC_PAGESIZE - off;
+	else
+		max = sz;
+	ce = cherigc_vmap_get(&cherigc->gc_cv, &cherigc->gc_cvi, base);
+	if (ce != NULL) cherigc_assert(ce->ce_addr == (uint64_t)base - off, "");
+	if (CE_GOOD(ce)) {
+		UNMANAGED_PUSH(base, max);
+		cherigc_printf("pushed %zu bytes\n", max);
+	} else
+		cherigc_printf("did not push %zu bytes\n", max);
+
+	if (off + sz > CHERIGC_PAGESIZE) {
+		/* Pages that aren't first or last. */
+		sz -= CHERIGC_PAGESIZE;
+		base = CHERIGC_NEXTPAGE(base);
+		for (; sz >= CHERIGC_PAGESIZE; sz -= CHERIGC_PAGESIZE) {
+			ce = cherigc_vmap_get(&cherigc->gc_cv,
+			    &cherigc->gc_cvi, base);
+			if (ce != NULL) cherigc_assert(ce->ce_addr == (uint64_t)base, "");
+			if (CE_GOOD(ce)) {
+				UNMANAGED_PUSH(base, CHERIGC_PAGESIZE);
+				cherigc_printf("pushed %zu bytes\n", CHERIGC_PAGESIZE);
+			} else
+				cherigc_printf("did not push %zu bytes\n", CHERIGC_PAGESIZE);
+			base = CHERIGC_NEXTPAGE(base);
+		}
+
+		/* Last page. */
+		if (sz != 0) {
+			ce = cherigc_vmap_get(&cherigc->gc_cv,
+			    &cherigc->gc_cvi, base);
+			if (ce != NULL) cherigc_assert(ce->ce_addr == (uint64_t)base, "");
+			if (CE_GOOD(ce)) {
+				UNMANAGED_PUSH(base, sz);
+				cherigc_printf("pushed %zu bytes\n", sz);
+			} else
+				cherigc_printf("did not push %zu bytes\n", sz);
+		}
+	}
+
 	return (0);
 }
 
