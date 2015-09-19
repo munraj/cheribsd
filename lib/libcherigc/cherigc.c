@@ -23,6 +23,7 @@
 #include <jemalloc_internal.h>
 
 #include "cherigc.h"
+#include "cherigc_ctl.h"
 
 /*
  * Defined in cherigc_libc.c.
@@ -512,6 +513,7 @@ cherigc_init(void)
 	cherigc_assert(cherigc->gc_revoked.cs_stack != NULL, "");
 
 	/* Initialize unmanaged objects list to fixed size. */
+	cherigc->gc_track_unmanaged = 1;
 	cherigc->gc_unmanaged.cs_size = CHERIGC_UNMANAGED_LIST_SIZE;
 	cherigc->gc_unmanaged.cs_stack = cherigc_internal_alloc(
 	    cherigc->gc_unmanaged.cs_size);
@@ -1140,13 +1142,15 @@ cherigc_revoke(void *p)
 int
 cherigc_ctl(int cmd, int key, void *val)
 {
-	int *ival;
-	size_t *sval;
 	int iswrite;
 
 	iswrite = 0;
-	ival = val;
-	sval = val;
+#define	KEY_RW(var, type) do {						\
+		if (iswrite)						\
+			(var) = *(type *)val;				\
+		else							\
+			*(type *)val = (var);				\
+} while (0)
 
 	switch (cmd) {
 	case CHERIGC_CTL_SET:
@@ -1154,13 +1158,16 @@ cherigc_ctl(int cmd, int key, void *val)
 	case CHERIGC_CTL_GET:
 		switch (key) {
 		case CHERIGC_KEY_IGNORE:
-			if (iswrite)
-				cherigc->gc_ignore = *ival;
-			else
-				*ival = cherigc->gc_ignore;
+			KEY_RW(cherigc->gc_ignore, int);
 			break;
 		case CHERIGC_KEY_NALLOC:
-			*sval = cherigc->gc_nalloc;
+			*(size_t *)val = cherigc->gc_nalloc;
+			break;
+		case CHERIGC_KEY_REVOKE_DEBUGGING:
+			KEY_RW(cherigc->gc_revoke_debugging, int);
+			break;
+		case CHERIGC_KEY_TRACK_UNMANAGED:
+			KEY_RW(cherigc->gc_track_unmanaged, int);
 			break;
 		default:
 			return (-1);
@@ -1192,6 +1199,8 @@ cherigc_mark_children(void *p, size_t sz, cherigc_examine_fn *fn,
 	end = (char *)p + sz;
 	for (childp = alignp; childp < end; childp += CHERIGC_CAPSIZE) {
 		tag = CHERIGC_PTR_GETTAG((void *)childp);
+		if (tag)
+			cherigc_printf("tag at childp=%p base=%zx\n", childp, CHERIGC_PTR_GETBASE((void *)childp));
 		if (fn != NULL && tag)
 			(*fn)(childp, ctx);
 		rc = cherigc_push_root(childp);
@@ -1306,6 +1315,8 @@ cherigc_push_root(void *p)
 	rc = cherigc_get_object_start(q, &ce, &idx);
 	if (rc != 0) {
 		/* Unmanaged object. */
+		if (!cherigc->gc_track_unmanaged)
+			return (0);
 		sz = CHERIGC_PTR_GETLEN(p);
 		cherigc_printf("unmanaged root %p, size %zu\n", q, sz);
 		if (cherigc_unmanaged_ismarked(q, sz)) {
@@ -1425,8 +1436,8 @@ cherigc_mark_all(cherigc_examine_fn *fn, void *ctx)
 	if (rc != 0)
 		return (rc);
 
-	cherigc_printf("pushing stack (size %zu bytes)\n",
-	    cherigc->gc_stack.cc_size);
+	cherigc_printf("pushing stack (%p, %zu bytes)\n",
+	    cherigc->gc_stack.cc_cap, cherigc->gc_stack.cc_size);
 	cherigc_assert(cherigc->gc_stack.cc_cap != NULL,
 	    "expected saved stack (was cherigc_vmap_update called?)");
 	rc = cherigc_push_roots(&cherigc->gc_stack, fn, ctx);

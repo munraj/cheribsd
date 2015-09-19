@@ -319,14 +319,10 @@ struct cherigc {
 	int			gc_ingc;
 	/* Total time spent in the collector. */
 	uint64_t		gc_pausetime;
-	/*
-	 * If set, revoked objects will remain allocated in the tables, but
-	 * still invalidated as normal. Useful for determining whether the
-	 * collector really is invalidating revoked capabilities.
-	 */
-	int			gc_revoke_debugging;
 	/* See cherigc_ctl(). */
+	int			gc_revoke_debugging;
 	int			gc_ignore;
+	int			gc_track_unmanaged;
 };
 
 #define	CHERIGC_PROT_RD		0x00000001UL
@@ -466,33 +462,8 @@ int			 cherigc_collect(void);
 /* Lazy revoke (invalidates happen on next collection). */
 int			 cherigc_revoke(void *_p);
 
-/*
- * Configure the collector.
- *
- * Args:
- * cmd: one of CHERIGC_CTL_*.
- * key: cmd-specific; one of CHERIGC_KEY_*.
- * val: key-specific input or output value.
- *
- * Return values: 0 iff success.
- *
- * GET: get a value.
- * SET: set a value.
- *
- * Keys:
- *
- * IGNORE r/w (int *val):
- * When non-zero, any new allocations will be ignored by the collector.
- *
- * NALLOC r/o (size_t *val):
- * The current number of managed objects.
- */
+/* Configure the collector. See cherigc_ctl.h. */
 int			 cherigc_ctl(int _cmd, int _key, void *_val);
-#define	CHERIGC_CTL_GET		0
-#define	CHERIGC_CTL_SET		1
-
-#define	CHERIGC_KEY_IGNORE	0
-#define	CHERIGC_KEY_NALLOC	1
 
 /*
  * Marking API.
