@@ -1015,15 +1015,16 @@ cherigc_notify_free(void *p, int flags)
 
 	before = cherigc_gettime();
 
-	cherigc_get_regs();
-
 	/* Save registers. */
+	cherigc_get_regs();
 
 	cherigc_printf("GC free: p=%p, tid=%d\n",
 	    p, cherigc_gettid());
 
-	if (p == NULL)
+	if (p == NULL) {
+		rc = CHERIGC_FREE_DEFER;
 		goto ret;
+	}
 
 	/* Just for debugging, to catch test failures and things. */
 	cherigc_assert(p != NULL, "");
@@ -1036,13 +1037,16 @@ cherigc_notify_free(void *p, int flags)
 	 * the GC was initialized, so let it go.
 	 */
 	rc = cherigc_get_object_start(p, &ce, &idx);
-	if (rc != 0)
-		return (CHERIGC_FREE_NOW);
+	if (rc != 0) {
+		rc = CHERIGC_FREE_NOW;
+		goto ret;
+	}
 
 	cherigc_assert(cherigc_revoke(p) == 0, "");
 
+	rc = CHERIGC_FREE_DEFER;
 ret:
-	cherigc_printf("(deferring %p)\n", p);
+	cherigc_printf("(%sdeferring %p)\n", rc == CHERIGC_FREE_DEFER ? "" : "not ", p);
 	cherigc_put_regs();
 	CHERIGC_LEAVEGC;
 	after = cherigc_gettime();
@@ -1051,7 +1055,7 @@ ret:
 	//cherigc_time_printf(diff, "pause");
 	cherigc->gc_pausetime += diff;
 	//cherigc_time_printf(cherigc->gc_pausetime, "total pause");
-	return (CHERIGC_FREE_DEFER);
+	return (rc);
 }
 
 __capability void *
