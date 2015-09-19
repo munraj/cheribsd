@@ -325,6 +325,8 @@ struct cherigc {
 	 * collector really is invalidating revoked capabilities.
 	 */
 	int			gc_revoke_debugging;
+	/* See cherigc_ctl(). */
+	int			gc_ignore;
 };
 
 #define	CHERIGC_PROT_RD		0x00000001UL
@@ -465,6 +467,34 @@ int			 cherigc_collect(void);
 int			 cherigc_revoke(void *_p);
 
 /*
+ * Configure the collector.
+ *
+ * Args:
+ * cmd: one of CHERIGC_CTL_*.
+ * key: cmd-specific; one of CHERIGC_KEY_*.
+ * val: key-specific input or output value.
+ *
+ * Return values: 0 iff success.
+ *
+ * GET: get a value.
+ * SET: set a value.
+ *
+ * Keys:
+ *
+ * IGNORE r/w (int *val):
+ * When non-zero, any new allocations will be ignored by the collector.
+ *
+ * NALLOC r/o (size_t *val):
+ * The current number of managed objects.
+ */
+int			 cherigc_ctl(int _cmd, int _key, void *_val);
+#define	CHERIGC_CTL_GET		0
+#define	CHERIGC_CTL_SET		1
+
+#define	CHERIGC_KEY_IGNORE	0
+#define	CHERIGC_KEY_NALLOC	1
+
+/*
  * Marking API.
  *
  * mark_all: Call a function on every reachable object. The internal
@@ -491,6 +521,8 @@ int			 cherigc_mark_all(cherigc_examine_fn *_fn,
 /* Collection helpers. */
 /* Marking. */
 int			 cherigc_push_roots(struct cherigc_caps *_cc,
+			    cherigc_examine_fn *_fn, void *_ctx);
+int			 cherigc_push_roots_stk(struct cherigc_stack *_cs,
 			    cherigc_examine_fn *_fn, void *_ctx);
 int			 cherigc_mark_children(void *_p, size_t _sz,
 			    cherigc_examine_fn *_fn, void *_ctx);

@@ -885,6 +885,10 @@ cherigc_notify_alloc(void *p, size_t sz, int flags)
 
 	if (CHERIGC_ISINGC)
 		return;
+
+	if (cherigc->gc_ignore)
+		return;
+
 	CHERIGC_ENTERGC;
 
 	before = cherigc_gettime();
@@ -1129,6 +1133,42 @@ cherigc_revoke(void *p)
 		ce->ce_gctype |= CHERIGC_VMENT_PAGE_REVOKE;
 
 	cherigc->gc_nrevoke++;
+
+	return (0);
+}
+
+int
+cherigc_ctl(int cmd, int key, void *val)
+{
+	int *ival;
+	size_t *sval;
+	int iswrite;
+
+	iswrite = 0;
+	ival = val;
+	sval = val;
+
+	switch (cmd) {
+	case CHERIGC_CTL_SET:
+		iswrite = 1;
+	case CHERIGC_CTL_GET:
+		switch (key) {
+		case CHERIGC_KEY_IGNORE:
+			if (iswrite)
+				cherigc->gc_ignore = *ival;
+			else
+				*ival = cherigc->gc_ignore;
+			break;
+		case CHERIGC_KEY_NALLOC:
+			*sval = cherigc->gc_nalloc;
+			break;
+		default:
+			return (-1);
+		}
+		break;
+	default:
+		return (-1);
+	}
 
 	return (0);
 }

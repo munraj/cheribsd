@@ -703,17 +703,46 @@ do_libcheri_init(void)
 int
 main(void)
 {
-	int rc;
+	size_t sval;
+	int rc, val;
+
+	/* Disable collection for libcheri allocations (treat these
+	 * allocations as roots), since they will not be reachable
+	 * otherwise (they are not all stored as capabilities).
+	 */
+	val = 1;
+	rc = cherigc_ctl(CHERIGC_CTL_SET, CHERIGC_KEY_IGNORE, &val);
+	if (rc != 0) {
+		fprintf(stderr, "cherigc_ctl: %d\n", rc);
+		return (rc);
+	}
 
 	rc = do_libcheri_init();
 	if (rc != 0)
 		return (rc);
 	(void)do_libcheri_init;
 
+	/* Enable collection for future allocations. */
+	val = 0;
+	rc = cherigc_ctl(CHERIGC_CTL_SET, CHERIGC_KEY_IGNORE, &val);
+	if (rc != 0) {
+		fprintf(stderr, "cherigc_ctl: %d\n", rc);
+		return (rc);
+	}
+
 	printf("call invoke_helper\n");
 	rc = invoke_helper_cap(sandbox_object_getobject(cheri_gc_test_objectp),
 	    cheri_gc);
 	printf("rc from invoke_helper: %d\n", rc);
+
+	cherigc_collect();
+
+	rc = cherigc_ctl(CHERIGC_CTL_SET, CHERIGC_KEY_NALLOC, &sval);
+	if (rc != 0) {
+		fprintf(stderr, "cherigc_ctl: %d\n", rc);
+		return (rc);
+	}
+	printf("nalloc: %zu\n", sval);
 
 	(void)do_bintree_test;
 	(void)do_linked_list_test;
