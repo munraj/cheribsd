@@ -3,6 +3,7 @@
 PROG=cheri_gc_test-helper
 SRCS=gc_test-helper.c
 
+CFLAGS+=	-g
 LDFLAGS+=	-Wl,--script=${.CURDIR}/../../lib/libc_cheri/sandbox.ld	\
 		-nostdlib
 MAN=

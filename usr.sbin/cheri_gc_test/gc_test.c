@@ -21,7 +21,8 @@
 #include <cherigc.h>
 #include <cherigc_ctl.h>
 
-static __capability void	*malloc_wrapped(size_t size);
+static __capability void	*malloc_wrapped2(size_t size,
+				    const char *file, int line);
 
 /* Helper sandbox (for ambient -> sandbox calls). */
 struct cheri_object cheri_gc_test;
@@ -40,7 +41,9 @@ extern struct cheri_object cheri_gc_object;
 	__attribute__((cheri_method_suffix("_c")))			\
 	__attribute__((cheri_method_class(cheri_gc_object)))
 CHERI_GC_OBJECT_CCALL __capability void	*cheri_gc_object_malloc(
-					    size_t size);
+					    size_t size,
+					    __capability const char *file,
+					    int line);
 CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_collect(void);
 CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_ctl(int cmd,
 					    int key,
@@ -90,11 +93,12 @@ cheri_gc_object_init(void)
 }
 
 __capability void *
-cheri_gc_object_malloc(size_t size)
+cheri_gc_object_malloc(size_t size, __capability const char *file,
+    int line)
 {
 
 	fprintf(stderr, "cheri_gc_object_malloc called\n");
-	return (malloc_wrapped(size));
+	return (malloc_wrapped2(size, (const void *)file, line));
 }
 
 int
@@ -130,7 +134,7 @@ cheri_gc_object_revoke(__capability void *p)
 }
 
 static __capability void *
-malloc_wrapped(size_t size)
+malloc_wrapped2(size_t size, const char *file, int line)
 {
 	__capability void *c;
 	void *p;
@@ -147,6 +151,8 @@ malloc_wrapped(size_t size)
 		printf("malloc_wrapped: out of memory\n");
 		exit(1);
 	}
+
+	printf("malloc_wrapped2: %p @ %s:%d\n", p, file, line);
 
 	c = cheri_ptr(p, size);
 
@@ -234,6 +240,7 @@ do_libcheri_init(void)
 }
 
 #define mkcap	cheri_ptr
+#define	TAGGED_HASHES
 #include "gc_tests.c"
 
 static int
@@ -271,8 +278,6 @@ do_sandbox_test(void)
 	    cheri_gc);
 	printf("rc from invoke_helper: %d\n", rc);
 
-	cherigc_collect();
-
 	rc = cherigc_ctl(CHERIGC_CTL_GET, CHERIGC_KEY_NALLOC, &sval);
 	if (rc != 0) {
 		fprintf(stderr, "cherigc_ctl: %d\n", rc);
@@ -287,8 +292,8 @@ int
 main(void)
 {
 
-	(void)do_sandbox_test;
-	(void)do_bintree_test();
+	(void)do_sandbox_test();
+	(void)do_bintree_test;
 	(void)do_linked_list_test;
 	(void)do_revoke_test;
 

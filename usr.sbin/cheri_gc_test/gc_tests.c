@@ -1,3 +1,5 @@
+#define malloc_wrapped(sz) malloc_wrapped2((sz), __FILE__, __LINE__)
+
 struct node {
 	int v;
 	__capability void *hash;
@@ -90,6 +92,7 @@ capeq(__capability void *a, __capability void *b)
 static __capability void *
 mkhash(__capability struct node *n)
 {
+	__capability void *h;
 	uint64_t v;
 
 	v = qhash2(n->v);
@@ -103,7 +106,12 @@ mkhash(__capability struct node *n)
 		if (n->r != NULL)
 			v ^= qhash2cap(n->r->hash);
 	}
-	return (mkcap((void *)(v & 0xFFFFFFFF), v >> 32));
+
+	h = mkcap((void *)(v & 0xFFFFFFFF), v >> 32);
+#ifndef TAGGED_HASHES
+	h = cheri_cleartag(h);
+#endif
+	return (h);
 }
 
 /* Check the hash stored in n with one computed now using mkhash. */
@@ -137,6 +145,8 @@ chktree(__capability struct node *n, int *vp, int depth)
 
 	if (*vp <= depth)
 		printf("checking tree, depth %d...\n", *vp);
+
+	printf("Checking tree, depth %d, node %d...\n", depth, *vp);
 
 	rc2 = chkhash(n);
 	if (rc2 != 0)
@@ -197,6 +207,7 @@ do_bintree_test(void)
 	__capability struct node *bintree_roots[128];
 	int bintree_depth, v, rc, orig_track_unmanaged, val;
 
+#ifdef TAGGED_HASHES
 	/*
 	 * We'll create lots of invalid but tagged capabilities in our hash
 	 * function, so make sure the GC doesn't bother scanning them.
@@ -214,6 +225,10 @@ do_bintree_test(void)
 		printf("ERROR: cherigc_ctl\n");
 		return (-1);
 	}
+#else
+	(void)val;
+	(void)orig_track_unmanaged;
+#endif
 
 	bintree_depth = 3;
 	printf("constructing a binary tree of depth %d\n", bintree_depth);
@@ -234,6 +249,7 @@ do_bintree_test(void)
 		printf("ok\n");
 
 
+#ifdef TAGGED_HASHES
 	/* Restore the track unmanaged state. */
 	rc = cherigc_ctl(CHERIGC_CTL_SET, CHERIGC_KEY_TRACK_UNMANAGED,
 	    &orig_track_unmanaged);
@@ -241,6 +257,7 @@ do_bintree_test(void)
 		printf("ERROR: cherigc_ctl\n");
 		return (-1);
 	}
+#endif
 
 	return (0);
 }

@@ -22,7 +22,8 @@ struct cheri_object cheri_gc_object;
 	__attribute__((cheri_method_suffix("_c")))			\
 	__attribute__((cheri_method_class(cheri_gc_object)))
 CHERI_GC_OBJECT_CCALL __capability void	*cheri_gc_object_malloc(
-					    size_t size);
+					    size_t size, const char *file,
+					    int line);
 CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_collect(void);
 CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_ctl(int cmd,
 					    int key, void *val);
@@ -39,10 +40,10 @@ invoke(void)
 }
 
 static void *
-malloc_wrapped(size_t sz)
+malloc_wrapped2(size_t sz, const char *file, int line)
 {
 
-	return (cheri_gc_object_malloc_c(cheri_gc, sz));
+	return (cheri_gc_object_malloc_c(cheri_gc, sz, file, line));
 }
 
 static int
@@ -74,6 +75,7 @@ cherigc_revoke(void *p)
 }
 
 #define mkcap(p, n) ((__capability void *)(p))
+#undef	TAGGED_HASHES
 #include "../../usr.sbin/cheri_gc_test/gc_tests.c"
 
 int
@@ -83,14 +85,15 @@ invoke_helper(struct cheri_object _cheri_gc)
 	cheri_gc = _cheri_gc;
 
 	/* Simple sandbox test. */
-	printf("start inside invoke_helper %lx\n", cheri_getoffset(cheri_gc.co_codecap));
-	p = cheri_gc_object_malloc_c(cheri_gc, 100);
+	/*printf("start inside invoke_helper %lx\n", cheri_getoffset(cheri_gc.co_codecap));
+	p = malloc_wrapped(100);
 	printf("(in sandbox) malloc gave ptr: %lx\n", cheri_getbase(p));
 	printf("(in sandbox) ptr tag: %lu\n", cheri_gettag(p));
 
 	printf("(in sandbox) perform collection\n");
 	(void)cheri_gc_object_collect_c(cheri_gc);
-	printf("(in sandbox) done. pointer tag now: %lu\n", cheri_gettag(p));
+	printf("(in sandbox) done. pointer tag now: %lu\n", cheri_gettag(p));*/
+	(void)p;
 
 	(void)do_bintree_test();
 	(void)do_linked_list_test;

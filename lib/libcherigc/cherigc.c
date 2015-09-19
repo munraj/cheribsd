@@ -1347,9 +1347,9 @@ cherigc_push_root(void *p)
 			 * XXX: TODO: Check writable, check still owned by
 			 * jemalloc, etc.
 			 */
-			cherigc_printf(
+			/*cherigc_printf(
 			    "(small) root %p is pointing to unused memory!\n", q);
-			CHERIGC_CAP_DEREF(p) = CHERIGC_PTR_CLRTAG(p);
+			CHERIGC_CAP_DEREF(p) = CHERIGC_PTR_CLRTAG(p);*/
 		} else if (ent == CHERIGC_AMARK) {
 			/* Already marked. */
 			cherigc_printf("(small) root %p already marked\n", q);
@@ -1562,11 +1562,8 @@ cherigc_unmanaged_mark_and_push(void *base, size_t sz)
 		max = sz;
 	ce = cherigc_vmap_get(&cherigc->gc_cv, &cherigc->gc_cvi, base);
 	if (ce != NULL) cherigc_assert(ce->ce_addr == (uint64_t)base - off, "");
-	if (CE_GOOD(ce)) {
+	if (CE_GOOD(ce))
 		UNMANAGED_PUSH(base, max);
-		cherigc_printf("pushed %zu bytes\n", max);
-	} else
-		cherigc_printf("did not push %zu bytes\n", max);
 
 	if (off + sz > CHERIGC_PAGESIZE) {
 		/* Pages that aren't first or last. */
@@ -1576,11 +1573,8 @@ cherigc_unmanaged_mark_and_push(void *base, size_t sz)
 			ce = cherigc_vmap_get(&cherigc->gc_cv,
 			    &cherigc->gc_cvi, base);
 			if (ce != NULL) cherigc_assert(ce->ce_addr == (uint64_t)base, "");
-			if (CE_GOOD(ce)) {
+			if (CE_GOOD(ce))
 				UNMANAGED_PUSH(base, CHERIGC_PAGESIZE);
-				cherigc_printf("pushed %zu bytes\n", CHERIGC_PAGESIZE);
-			} else
-				cherigc_printf("did not push %zu bytes\n", CHERIGC_PAGESIZE);
 			base = CHERIGC_NEXTPAGE(base);
 		}
 
@@ -1589,11 +1583,8 @@ cherigc_unmanaged_mark_and_push(void *base, size_t sz)
 			ce = cherigc_vmap_get(&cherigc->gc_cv,
 			    &cherigc->gc_cvi, base);
 			if (ce != NULL) cherigc_assert(ce->ce_addr == (uint64_t)base, "");
-			if (CE_GOOD(ce)) {
+			if (CE_GOOD(ce))
 				UNMANAGED_PUSH(base, sz);
-				cherigc_printf("pushed %zu bytes\n", sz);
-			} else
-				cherigc_printf("did not push %zu bytes\n", sz);
 		}
 	}
 
