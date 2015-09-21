@@ -230,7 +230,7 @@ do_bintree_test(void)
 	(void)orig_track_unmanaged;
 #endif
 
-	bintree_depth = 3;
+	bintree_depth = 10;
 	printf("constructing a binary tree of depth %d\n", bintree_depth);
 	v = 0;
 	bintree_root = mktree(&v, bintree_depth);
@@ -397,10 +397,13 @@ do_revoke_test(void)
 
 	/* Save address of hidden capability for checking later. */
 	t = tohide;
-	addr = (uint64_t)(volatile void *)t;
+	addr = (uint64_t)cheri_getbase(tohide);
+	t = tohide;
 
-	printf("hiding %p in hard-to-find places.\n", (void *)tohide);
+	printf("revoke test: hiding %" PRIx64 " in hard-to-find places.\n", addr);
+
 	/* Hide in a binary tree. */
+	printf("revoke test: mktree\n");
 	v = 0;
 	n = mktree(&v, REVOKE_TREEDEPTH);
 	t = n;
@@ -421,6 +424,7 @@ do_revoke_test(void)
 	t = NULL;
 
 	/* Hide in a linked list. */
+	printf("revoke test: mklist\n");
 	l = mklist(REVOKE_LISTSZ);
 	t = l;
 	for (i = 0; i < REVOKE_LISTSZ / 2; i++) {
@@ -503,18 +507,28 @@ do_revoke_test(void)
 	 * Count existing refs. Should have at least three (array, bintree,
 	 * list), and not many more than three.
 	 */
-	refs = cherigc_getrefs((void *)tohide);
+	printf("revoke test: getrefs before revoke\n");
+	refs = cherigc_getrefs_uint64(addr);
 	if (refs < 3) {
-		printf("ERROR: <3 refs\n");
+		printf("ERROR: <3 refs (%d)\n", refs);
 		return (-1);
-	} else if (refs > 5) {
-		printf("ERROR: >5 refs\n");
+	} else if (refs > 6) {
+		printf("ERROR: >6 refs (%d)\n", refs);
 		return (-1);
 	}
-	printf("%d refs\n", refs);
+	printf("for %" PRIx64 ", %d refs\n", addr, refs);
+
+	val = 0;
+	rc = cherigc_ctl(CHERIGC_CTL_SET, CHERIGC_KEY_REVOKE_DEBUGGING,
+	    &val);
+	if (rc != 0) {
+		printf("ERROR: cherigc_ctl\n");
+		return (-1);
+	}
 
 	/* Revoke the capability we want to hide. */
-	rc = cherigc_revoke((void *)tohide);
+	printf("revoke test: revoke\n");
+	rc = cherigc_revoke(tohide);
 	if (rc != 0) {
 		printf("ERROR: cherigc_revoke\n");
 		return (-1);
@@ -532,6 +546,7 @@ do_revoke_test(void)
 		return (-1);
 	}
 
+	printf("revoke test: collect\n");
 	rc = cherigc_collect();
 	if (rc != 0) {
 		printf("ERROR: cherigc_collect\n");
@@ -546,13 +561,39 @@ do_revoke_test(void)
 		return (-1);
 	}
 
+	/*
+	 * Check that the root of the tree is still around, and the
+	 * root of the linked list.
+	 */
+	printf("revoke test: getrefs tree\n");
+	refs = cherigc_getrefs_uint64(cheri_getbase(n));
+	if (refs <= 0) {
+		printf("ERROR: bintree node gone! %d refs!\n", refs);
+		return (-1);
+	}
+	printf("revoke test: %d refs to bintree root\n", refs);
+	printf("revoke test: getrefs list\n");
+	refs = cherigc_getrefs_uint64(cheri_getbase(l));
+	if (refs <= 0) {
+		printf("ERROR: linked list head gone! %d refs!\n", refs);
+		return (-1);
+	}
+	printf("revoke test: %d refs to list root\n", refs);
+
 	/* Now check that it really has been revoked. */
-	refs = cherigc_getrefs((void *)addr);
+	/*
+	 * XXX: From within a sandbox, we can't reconstruct the revoked
+	 * capability; therefore, we pass an integer pointer, and
+	 * reonstruct it on the ambient side.
+	 */
+	printf("revoke test: getrefs tohide\n");
+	refs = cherigc_getrefs_uint64(addr);
 	if (refs != 0) {
 		printf("ERROR: cap not revoked! %d refs!\n", refs);
 		return (-1);
 	}
-	printf("revoke ok: 0 refs\n");
+
+	printf("revoke test: ok: 0 refs\n");
 
 	return (0);
 }

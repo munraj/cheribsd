@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -28,6 +29,8 @@ CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_collect(void);
 CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_ctl(int cmd,
 					    int key, void *val);
 CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_getrefs(void *p);
+CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_getrefs_uint64(
+					    uint64_t addr);
 CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_revoke(void *p);
 struct cheri_object cheri_gc;
 
@@ -68,6 +71,13 @@ cherigc_getrefs(void *p)
 }
 
 static int
+cherigc_getrefs_uint64(uint64_t addr)
+{
+
+	return (cheri_gc_object_getrefs_uint64_c(cheri_gc, addr));
+}
+
+static int
 cherigc_revoke(void *p)
 {
 
@@ -95,9 +105,9 @@ invoke_helper(struct cheri_object _cheri_gc)
 	printf("(in sandbox) done. pointer tag now: %lu\n", cheri_gettag(p));*/
 	(void)p;
 
-	(void)do_bintree_test();
+	(void)do_bintree_test;
 	(void)do_linked_list_test;
-	(void)do_revoke_test;
+	(void)do_revoke_test();
 
 	return (1234789);
 }

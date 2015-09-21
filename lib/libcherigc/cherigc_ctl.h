@@ -35,14 +35,34 @@
  * can read pages referenced this way, and should only become more
  * conservative as a result of enabling this; however, there may be a large
  * performance hit if the range of the capability is very large.
+ *
+ * STATS_INCREMENTAL r/o (struct cherigc_stats *cs):
+ * Retrieve incremental statistics that the GC has gathered. See also
+ * STATS_FULL.
+ *
+ * STATS_FULL r/o (struct cherigc_stats *cs):
+ * Retrieve the statistics as stored in the VM tables. Can be used for
+ * integrity checking: if both STATS_FULL and STATS_INCREMENTAL do not
+ * return the same result, there's likely a bug in the collector. (This may
+ * not apply if some debugging features are in use; for example, the revoke
+ * counts may be different if REVOKE_DEBUGGING is set.)
  */
 
 #define	CHERIGC_CTL_GET			0
 #define	CHERIGC_CTL_SET			1
 
-#define	CHERIGC_KEY_IGNORE		0
-#define	CHERIGC_KEY_NALLOC		1
-#define	CHERIGC_KEY_REVOKE_DEBUGGING	2
-#define	CHERIGC_KEY_TRACK_UNMANAGED	3
+#define	X_CHERIGC_KEY							\
+	X(CHERIGC_KEY_IGNORE,			0)			\
+	X(CHERIGC_KEY_NALLOC,			1)			\
+	X(CHERIGC_KEY_REVOKE_DEBUGGING,		2)			\
+	X(CHERIGC_KEY_TRACK_UNMANAGED,		3)			\
+	X(CHERIGC_KEY_STATS_INCREMENTAL,	4)			\
+	X(CHERIGC_KEY_STATS_FULL,		5)
+
+enum cherigc_key_enum {
+#define	X(c, n)	c = n,
+	X_CHERIGC_KEY
+#undef	X
+};
 
 #endif /* !_CHERIGC_CTL_H_ */

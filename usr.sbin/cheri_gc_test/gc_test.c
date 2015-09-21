@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,6 +51,8 @@ CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_ctl(int cmd,
 					    __capability void *val);
 CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_getrefs(
 					    __capability void *p);
+CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_getrefs_uint64(
+					    uint64_t addr);
 CHERI_GC_OBJECT_CCALL int		 cheri_gc_object_revoke(
 					    __capability void *p);
 CHERI_CLASS_DECL(cheri_gc_object);
@@ -122,7 +125,15 @@ cheri_gc_object_getrefs(__capability void *p)
 {
 
 	fprintf(stderr, "cheri_gc_object_getrefs called\n");
-	return (cherigc_getrefs((void *)p));
+	return (cherigc_getrefs((void *)cheri_getbase(p)));
+}
+
+int
+cheri_gc_object_getrefs_uint64(uint64_t addr)
+{
+
+	fprintf(stderr, "cheri_gc_object_getrefs_uint64 called\n");
+	return (cherigc_getrefs((void *)addr));
 }
 
 int
@@ -130,7 +141,7 @@ cheri_gc_object_revoke(__capability void *p)
 {
 
 	fprintf(stderr, "cheri_gc_object_revoke called\n");
-	return (cherigc_revoke((void *)p));
+	return (cherigc_revoke(p));
 }
 
 static __capability void *
@@ -239,7 +250,8 @@ do_libcheri_init(void)
 	return (0);
 }
 
-#define mkcap	cheri_ptr
+#define	mkcap				cheri_ptr
+#define	cherigc_getrefs_uint64(addr)	cherigc_getrefs((void *)(addr))
 #define	TAGGED_HASHES
 #include "gc_tests.c"
 

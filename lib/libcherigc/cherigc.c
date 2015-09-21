@@ -39,6 +39,12 @@ struct cherigc *cherigc;
 /* To avoid bootstrapping problems with e.g. libcheri. */
 static int cherigc_initialized;
 
+const char *cherigc_key_str[] = {
+#define	X(c, n)	[n] = #c,
+	X_CHERIGC_KEY
+#undef	X
+};
+
 void
 _cherigc_printf(const char *fmt, ...)
 {
@@ -113,20 +119,27 @@ struct cherigc_vment *
 cherigc_vmap_get(struct cherigc_vmap *cv, struct cherigc_vidxs *cvi,
     void *p)
 {
-	uint64_t addr, idx;
+	struct cherigc_vment *ce;
 	struct cherigc_vidx *ci;
+	uint64_t addr, idx;
 
 	addr = (uint64_t)p;
 
+	ce = NULL;
 	for (ci = cvi->cvi_ci; cv != NULL; ci++) {
 		idx = (addr >> ci->ci_shift) & ci->ci_mask;
-		if (ci->ci_type == CHERIGC_CV_VMENT)
-			return (cv->cv_vment[idx]);
-		else
+		cherigc_ddd("[%zu] addr: %" PRIx64 ", idx: 0x%" PRIx64 ", cv=%p %s\n",
+		    (size_t)(ci - cvi->cvi_ci), addr, idx, cv, ci->ci_type == CHERIGC_CV_VMENT ? "VMENT" : "VMAP");
+		if (ci->ci_type == CHERIGC_CV_VMENT) {
+			ce = cv->cv_vment[idx];
+			break;
+		} else
 			cv = cv->cv_vmap[idx];
 	}
 
-	return (NULL);
+	cherigc_ddd("[ ] addr: %" PRIx64 ", ce: %p\n", addr, ce);
+
+	return (ce);
 }
 
 struct cherigc_vment *
@@ -196,22 +209,22 @@ cherigc_vmap_update(struct cherigc_vmap *cv, struct cherigc_vidxs *cvi)
 	kp = procstat_getprocs(ps, KERN_PROC_PID, getpid(), &cnt);
 	if (kp == NULL)
 		goto error;
-	cherigc_printf("getprocs retrieved %u procs\n", cnt);
+	cherigc_d("getprocs retrieved %u procs\n", cnt);
 
 	kv = procstat_getvmmap(ps, kp, &cnt);
 	if (kv == NULL)
 		goto error;
-	cherigc_printf("getvmmap retrieved %u entries\n", cnt);
+	cherigc_d("getvmmap retrieved %u entries\n", cnt);
 
 	for (i = 0; i < cnt; i++) {
-		cherigc_printf("[%zu] %" PRIx64 " - %" PRIx64 "\n",
+		cherigc_d("[%zu] %" PRIx64 " - %" PRIx64 "\n",
 		    i, kv[i].kve_start, kv[i].kve_end);
 		if (kv[i].kve_flags & KVME_FLAG_GROWS_DOWN) {
 			/* XXX: Heuristic to find stack. */
 			cherigc->gc_stack.cc_cap = (void *)kv[i].kve_start;
 			cherigc->gc_stack.cc_size = kv[i].kve_end -
 			    kv[i].kve_start;
-			cherigc_printf("FOUND STACK: %" PRIx64 " - %"
+			cherigc_d("FOUND STACK: %" PRIx64 " - %"
 			    PRIx64 "\n", kv[i].kve_start, kv[i].kve_end);
 		}
 		for (addr = kv[i].kve_start; addr < kv[i].kve_end;
@@ -290,7 +303,7 @@ cherigc_amap_print(struct cherigc_amap *ca, uint64_t base_addr, int flags)
 			if (flags & CHERIGC_FL_AMAP_COMPACT) {
 				if (isstart) {
 					if (inobj)
-						cherigc_printf(
+						cherigc_d(
 						    "\t0x%" PRIx64
 						    " - 0x% " PRIx64
 						    " (%zu bytes)\n",
@@ -308,14 +321,14 @@ cherigc_amap_print(struct cherigc_amap *ca, uint64_t base_addr, int flags)
 				s[2] = ismark ? 'm' : '-';
 				s[3] = '-';
 				s[4] = '\0';
-				cherigc_printf("\t0x%" PRIx64 " : %s\n",
+				cherigc_d("\t0x%" PRIx64 " : %s\n",
 				    addr, s);
 			}
 		}
 	}
 
 	if ((flags & CHERIGC_FL_AMAP_COMPACT) && inobj) {
-		cherigc_printf("\t0x%" PRIx64 " - 0x% " PRIx64
+		cherigc_d("\t0x%" PRIx64 " - 0x% " PRIx64
 		    " (%zu bytes)\n", addr, addr + sz, sz);
 	}
 }
@@ -389,27 +402,30 @@ cherigc_vmap_get_stats(struct cherigc_stats *cs, struct cherigc_vmap *cv,
 }
 
 void
-cherigc_vm_print_stats(void)
+cherigc_print_stats(const char *who, struct cherigc_stats *cs)
+{
+
+	cherigc_d("stats according to %s:\n"
+	    "nalloc:        %zu (%zu large, %zu small)\n"
+	    "nallocbytes:   %zu\n"
+	    "nmark:         %zu\n"
+	    "nrevoke:       %zu\n"
+	    "nscanned:      %zu\n"
+	    "nscannedbytes: %zu\n",
+	    who, cs->cs_nalloc, cs->cs_nalloc_large, cs->cs_nalloc_small,
+	    cs->cs_nallocbytes, cs->cs_nmark, cs->cs_nrevoke,
+	    cs->cs_nscanned, cs->cs_nscannedbytes);
+}
+
+void
+cherigc_print_all_stats(void)
 {
 	struct cherigc_stats cs;
 
 	memset(&cs, 0, sizeof(cs));
 	cherigc_vmap_get_stats(&cs, &cherigc->gc_cv, &cherigc->gc_cvi, 0);
-	cherigc_printf("stats according to vmap:\n"
-	    "nalloc:       %zu (%zu large, %zu small)\n"
-	    "nallocbytes:  %zu\n"
-	    "nmark:        %zu\n"
-	    "nrevoke:      %zu\n",
-	    cs.cs_nalloc, cs.cs_nalloc_large, cs.cs_nalloc_small,
-	    cs.cs_nallocbytes, cs.cs_nmark, cs.cs_nrevoke);
-	cherigc_printf("stats according to gc:\n"
-	    "nalloc:       %zu (%zu large, %zu small)\n"
-	    "nallocbytes:  %zu\n"
-	    "nmark:        %zu\n"
-	    "nrevoke:      %zu\n",
-	    cherigc->gc_nalloc, cherigc->gc_nalloc_large,
-	    cherigc->gc_nalloc_small, cherigc->gc_nallocbytes,
-	    cherigc->gc_nmark, cherigc->gc_nrevoke);
+	cherigc_print_stats("vmap", &cs);
+	cherigc_print_stats("gc", &cherigc->gc_stats);
 }
 
 int
@@ -453,24 +469,24 @@ cherigc_vment_print(struct cherigc_vment *ce, int flags)
 	s[1] = (ce->ce_prot & CHERIGC_PROT_WR) ? 'w' : '-';
 	s[2] = (ce->ce_prot & CHERIGC_PROT_EX) ? 'x' : '-';
 	s[3] = '\0';
-	cherigc_printf("0x%" PRIx64 ": %s KVME type 0x%" PRIx32 "\n",
+	cherigc_d("0x%" PRIx64 ": %s KVME type 0x%" PRIx32 "\n",
 	    ce->ce_addr, s, ce->ce_type);
 
 	if (ce->ce_gctype & CHERIGC_VMENT_PAGE_AMAP)
 		cherigc_amap_print(&ce->ce_amap, ce->ce_addr, flags);
 	else {
-		cherigc_printf("\tEntire page object. Attributes: ");
+		cherigc_d("\tEntire page object. Attributes: ");
 		if (ce->ce_gctype == CHERIGC_VMENT_PAGE_FREE)
-			cherigc_printf("free ");
+			cherigc_d("free ");
 		if (ce->ce_gctype & CHERIGC_VMENT_PAGE_START)
-			cherigc_printf("start ");
+			cherigc_d("start ");
 		if (ce->ce_gctype & CHERIGC_VMENT_PAGE_MARK)
-			cherigc_printf("marked ");
+			cherigc_d("marked ");
 		if (ce->ce_gctype & CHERIGC_VMENT_PAGE_REVOKE)
-			cherigc_printf("revoke ");
+			cherigc_d("revoke ");
 		if (ce->ce_gctype & CHERIGC_VMENT_PAGE_USED)
-			cherigc_printf("cont ");
-		cherigc_printf("\n");
+			cherigc_d("cont ");
+		cherigc_d("\n");
 	}
 }
 
@@ -563,7 +579,7 @@ cherigc_find_or_add_page(void *p)
 
 	ce = cherigc_vmap_get(&cherigc->gc_cv, &cherigc->gc_cvi, p);
 	if (ce == NULL) {
-		cherigc_printf("not found in vmap: %p; trying update\n",
+		cherigc_d("not found in vmap: %p; trying update\n",
 		    p);
 		cherigc_vmap_update(&cherigc->gc_cv, &cherigc->gc_cvi);
 		ce = cherigc_vmap_get(&cherigc->gc_cv, &cherigc->gc_cvi,
@@ -645,7 +661,7 @@ cherigc_get_object_start_small(struct cherigc_vment *ce, void *p,
 		}
 	}
 
-	cherigc_printf("found object start index: %d\n", i - 1);
+	cherigc_dd("found object start index: %d\n", i - 1);
 
 	*idxp = i - 1;
 	*cep = ce;
@@ -760,7 +776,7 @@ cherigc_get_size_small(struct cherigc_vment *ce, void *p, void **qp,
 	} else
 		q = (void *)(CHERIGC_AMAP_ADDR(i - 1) + ce->ce_addr);
 
-	cherigc_printf("found (small) object start: %p\n", q);
+	cherigc_dd("found (small) object start: %p\n", q);
 
 	/*
 	 * 2) Calculate remaining size, possibly spanning over to next
@@ -774,7 +790,7 @@ cherigc_get_size_small(struct cherigc_vment *ce, void *p, void **qp,
 		else
 			sz++;
 	}
-	cherigc_printf("found object size (current), index: %zu, %d, %d\n", sz * CHERIGC_MINSIZE, i, idx);
+	cherigc_dd("found object size (current), index: %zu, %d, %d\n", sz * CHERIGC_MINSIZE, i, idx);
 	if (i == CHERIGC_AMAP_NENT) {
 		/*
 		 * No start of next object found; end of object might be in
@@ -800,7 +816,7 @@ cherigc_get_size_small(struct cherigc_vment *ce, void *p, void **qp,
 		}
 	}
 
-	cherigc_printf("found object size (final), index: %zu, %d, %d\n", sz * CHERIGC_MINSIZE, i, idx);
+	cherigc_dd("found object size (final), index: %zu, %d, %d\n", sz * CHERIGC_MINSIZE, i, idx);
 	sz *= CHERIGC_MINSIZE;
 
 	*qp = q;
@@ -846,7 +862,7 @@ cherigc_get_size_large(struct cherigc_vment *ce, void *p, void **qp,
 		}
 	}
 
-	cherigc_printf("found (large) object start: %p\n", q);
+	cherigc_dd("found (large) object start: %p\n", q);
 
 	/* 2) Calculate remaining size. */
 	for (;;) {
@@ -899,7 +915,7 @@ cherigc_notify_alloc(void *p, size_t sz, int flags)
 
 	/* Save registers. */
 
-	cherigc_printf("GC alloc: p=%p, sz=%zu, tid=%d\n",
+	cherigc_d("GC alloc: p=%p, sz=%zu, tid=%d\n",
 	    p, sz, cherigc_gettid());
 
 	/* Just for debugging, to catch test failures and things. */
@@ -925,7 +941,7 @@ cherigc_notify_alloc(void *p, size_t sz, int flags)
 		len = (sz + CHERIGC_PAGESIZE - 1) / CHERIGC_PAGESIZE;
 		for (i = 1; i < len; i++) {
 			p = CHERIGC_NEXTPAGE(p);
-			cherigc_printf("setting large p %p as used\n", p);
+			cherigc_dd("setting large p %p as used\n", p);
 			ce = cherigc_vmap_get(&cherigc->gc_cv,
 			    &cherigc->gc_cvi, p);
 			/*
@@ -936,7 +952,7 @@ cherigc_notify_alloc(void *p, size_t sz, int flags)
 			    "expected allocated pages to be mapped");
 			ce->ce_gctype = CHERIGC_VMENT_PAGE_USED;
 		}
-		cherigc_printf("just set %zu pages as used\n", len);
+		cherigc_dd("just set %zu pages as used\n", len);
 		acsz = len * CHERIGC_PAGESIZE;
 		cherigc->gc_nalloc_large++;
 	} else {
@@ -949,14 +965,14 @@ cherigc_notify_alloc(void *p, size_t sz, int flags)
 		len = (sz + CHERIGC_MINSIZE - 1) / CHERIGC_MINSIZE;
 		acsz = len * CHERIGC_MINSIZE;
 		end = aidx + len - 1;
-		cherigc_printf("len=%zu acsz=%zu aidx=%zu end=%zu\n",
+		cherigc_dd("len=%zu acsz=%zu aidx=%zu end=%zu\n",
 		    len, acsz, aidx, end);
 		max = (end < CHERIGC_AMAP_NENT) ? end :
 		    CHERIGC_AMAP_NENT - 1;
 		for (i = aidx + 1; i <= max; i++)
 			CHERIGC_ASETUSED(ca, i);
 		if (end >= CHERIGC_AMAP_NENT) {
-			cherigc_printf("amap bounds: have %zu > %zu, "
+			cherigc_dd("amap bounds: have %zu > %zu, "
 			    "spilling to next page\n", end,
 			    CHERIGC_AMAP_NENT);
 			/* Spill to next page, but no more. */
@@ -972,7 +988,7 @@ cherigc_notify_alloc(void *p, size_t sz, int flags)
 			    "expected second page to be mapped");
 			ce->ce_gctype = CHERIGC_VMENT_PAGE_AMAP;
 			ca = &ce->ce_amap;
-			cherigc_printf("end is now %zu\n", end);
+			cherigc_dd("end is now %zu\n", end);
 			for (i = 0; i <= end; i++)
 				CHERIGC_ASETUSED(ca, i);
 		}
@@ -984,7 +1000,7 @@ cherigc_notify_alloc(void *p, size_t sz, int flags)
 		size_t check_sz;
 
 		cherigc_get_size(p, &check_p, &check_sz);
-		cherigc_printf("alloc size check: %p -> %p, %zu\n",
+		cherigc_d("alloc size check: %p -> %p, %zu\n",
 			p, check_p, check_sz);
 		cherigc_assert(check_sz == acsz, "");
 	}
@@ -1024,7 +1040,7 @@ cherigc_notify_free(void *p, int flags)
 	/* Save registers. */
 	cherigc_get_regs();
 
-	cherigc_printf("GC free: p=%p, tid=%d\n",
+	cherigc_d("GC free: p=%p, tid=%d\n",
 	    p, cherigc_gettid());
 
 	if (p == NULL) {
@@ -1048,11 +1064,11 @@ cherigc_notify_free(void *p, int flags)
 		goto ret;
 	}
 
-	cherigc_assert(cherigc_revoke(p) == 0, "");
+	cherigc_assert(cherigc_revoke_ptr(p) == 0, "");
 
 	rc = CHERIGC_FREE_DEFER;
 ret:
-	cherigc_printf("(%sdeferring %p)\n", rc == CHERIGC_FREE_DEFER ? "" : "not ", p);
+	cherigc_d("(%sdeferring %p)\n", rc == CHERIGC_FREE_DEFER ? "" : "not ", p);
 	cherigc_put_regs();
 	CHERIGC_LEAVEGC;
 	after = cherigc_gettime();
@@ -1078,18 +1094,27 @@ cherigc_malloc(size_t sz)
 int
 cherigc_collect(void)
 {
+
+	return (cherigc_collect_with_cb(NULL, NULL));
+}
+
+int
+cherigc_collect_with_cb(cherigc_examine_fn *fn, void *ctx)
+{
 	int rc;
+
+	cherigc_assert(!CHERIGC_ISINGC, "");
 
 	CHERIGC_ENTERGC;
 	cherigc_get_regs();
 
-	cherigc_printf("collection time!\n");
-	printf("vmap_update: %d\n", cherigc_vmap_update(&cherigc->gc_cv,
-	    &cherigc->gc_cvi));
+	cherigc_d("collection time!\n");
+	cherigc_d("vmap_update: %d\n",
+	    cherigc_vmap_update(&cherigc->gc_cv, &cherigc->gc_cvi));
 	cherigc_vmap_print(&cherigc->gc_cv, &cherigc->gc_cvi, 0,
 	    CHERIGC_FL_USED_ONLY | CHERIGC_FL_AMAP_COMPACT);
 
-	rc = cherigc_mark_all(NULL, NULL);
+	rc = cherigc_mark_all(fn, ctx);
 	if (rc != 0)
 		goto ret;
 
@@ -1109,12 +1134,14 @@ ret:
 }
 
 int
-cherigc_revoke(void *p)
+cherigc_revoke_ptr(void *p)
 {
 	struct cherigc_vment *ce;
 	void *q;
 	size_t idx, sz;
 	int rc;
+
+	cherigc_d("cherigc_revoke_ptr: %p\n", p);
 
 	rc = cherigc_get_object_start(p, &ce, &idx);
 	if (rc != 0)
@@ -1125,7 +1152,10 @@ cherigc_revoke(void *p)
 	if (ce->ce_gctype == CHERIGC_VMENT_PAGE_AMAP) {
 		/*
 		 * XXX: Decide policy here. Simple option is to just call
-		 * cherigc_collect on isfull.
+		 * cherigc_collect on isfull. Note that if you want to grow
+		 * the stack, you must use CHERIGC_ENTERGC to ensure that
+		 * the allocation does not get tracked (and CHERIGC_LEAVEGC
+		 * at the appropriate point).
 		 */
 		cherigc_assert(!cherigc_stack_isfull(&cherigc->gc_revoked),
 		    "");
@@ -1140,38 +1170,78 @@ cherigc_revoke(void *p)
 }
 
 int
+cherigc_revoke_cap(__capability void *c)
+{
+
+	cherigc_d("cherigc_revoke_cap: base=%zx, len=%zu, tag=%ld\n",
+	    (size_t)cheri_getbase(c), (size_t)cheri_getlen(c),
+	    cheri_gettag(c));
+
+	if (!cheri_gettag(c))
+		return (-1);
+
+	return (cherigc_revoke_ptr((void *)cheri_getbase(c)));
+}
+
+int
 cherigc_ctl(int cmd, int key, void *val)
 {
 	int iswrite;
 
 	iswrite = 0;
 #define	KEY_RW(var, type) do {						\
-		if (iswrite)						\
-			(var) = *(type *)val;				\
-		else							\
-			*(type *)val = (var);				\
+	if (iswrite)							\
+		(var) = *(type *)val;					\
+	else								\
+		*(type *)val = (var);					\
+} while (0)
+
+#define	KEY_RO_CHECK() do {						\
+	if (iswrite)							\
+		return (-1);						\
 } while (0)
 
 	switch (cmd) {
 	case CHERIGC_CTL_SET:
 		iswrite = 1;
 	case CHERIGC_CTL_GET:
+		cherigc_d("cherigc_ctl: %s %s %s ",
+		    iswrite ? "SET" : "GET", cherigc_key_str[key],
+		    iswrite ? "<-" : "->");
 		switch (key) {
 		case CHERIGC_KEY_IGNORE:
 			KEY_RW(cherigc->gc_ignore, int);
+			cherigc_d("%d", *(int *)val);
 			break;
 		case CHERIGC_KEY_NALLOC:
+			KEY_RO_CHECK();
 			*(size_t *)val = cherigc->gc_nalloc;
+			cherigc_d("%zu", *(size_t *)val);
 			break;
 		case CHERIGC_KEY_REVOKE_DEBUGGING:
 			KEY_RW(cherigc->gc_revoke_debugging, int);
+			cherigc_d("%d", *(int *)val);
 			break;
 		case CHERIGC_KEY_TRACK_UNMANAGED:
 			KEY_RW(cherigc->gc_track_unmanaged, int);
+			cherigc_d("%d", *(int *)val);
+			break;
+		case CHERIGC_KEY_STATS_INCREMENTAL:
+			KEY_RO_CHECK();
+			memcpy(val, &cherigc->gc_stats,
+			    sizeof(cherigc->gc_stats));
+			cherigc_d("(struct cherigc_stats)");
+			break;
+		case CHERIGC_KEY_STATS_FULL:
+			KEY_RO_CHECK();
+			cherigc_vmap_get_stats(val, &cherigc->gc_cv,
+			    &cherigc->gc_cvi, 0);
+			cherigc_d("(struct cherigc_stats)");
 			break;
 		default:
 			return (-1);
 		}
+		cherigc_d("\n");
 		break;
 	default:
 		return (-1);
@@ -1200,7 +1270,7 @@ cherigc_mark_children(void *p, size_t sz, cherigc_examine_fn *fn,
 	for (childp = alignp; childp < end; childp += CHERIGC_CAPSIZE) {
 		tag = CHERIGC_PTR_GETTAG((void *)childp);
 		if (tag)
-			cherigc_printf("tag at childp=%p base=%zx\n", childp, CHERIGC_PTR_GETBASE((void *)childp));
+			cherigc_dd("tag at childp=%p base=%zx\n", childp, CHERIGC_PTR_GETBASE((void *)childp));
 		if (fn != NULL && tag)
 			(*fn)(childp, ctx);
 		rc = cherigc_push_root(childp);
@@ -1318,16 +1388,16 @@ cherigc_push_root(void *p)
 		if (!cherigc->gc_track_unmanaged)
 			return (0);
 		sz = CHERIGC_PTR_GETLEN(p);
-		cherigc_printf("unmanaged root %p, size %zu\n", q, sz);
+		cherigc_d("mark: unmanaged root %p, size %zu\n", q, sz);
 		if (cherigc_unmanaged_ismarked(q, sz)) {
 			/* Already marked. */
-			cherigc_printf("(unmanaged) root %p already marked (unmanaged cycle)\n", q);
+			cherigc_dd("mark: (unmanaged) root %p already marked (unmanaged cycle)\n", q);
 		} else {
 			/* Unmarked. */
 			rc = cherigc_unmanaged_mark_and_push(q, sz);
 			if (rc != 0)
 				return (rc);
-			cherigc_printf("just marked (unmanaged) root %p\n", q);
+			cherigc_d("mark: just marked (unmanaged) root %p\n", q);
 		}
 		return (0);
 	}
@@ -1352,7 +1422,7 @@ cherigc_push_root(void *p)
 			CHERIGC_CAP_DEREF(p) = CHERIGC_PTR_CLRTAG(p);*/
 		} else if (ent == CHERIGC_AMARK) {
 			/* Already marked. */
-			cherigc_printf("(small) root %p already marked\n", q);
+			cherigc_dd("mark: (small) root %p already marked\n", q);
 		} else if (ent == CHERIGC_ASTART) {
 			/* Unmarked. */
 			CHERIGC_ASETMARK(&ce->ce_amap, idx);
@@ -1361,7 +1431,7 @@ cherigc_push_root(void *p)
 			    &cherigc->gc_mark_stack, q, sz, 0);
 			if (rc != 0)
 				return (rc);
-			cherigc_printf("just marked (small) root %p\n", q);
+			cherigc_d("mark: just marked (small) root %p\n", q);
 		} else {
 			cherigc_assert(ent == 0 || ent == CHERIGC_AMARK ||
 			    ent == CHERIGC_ASTART, "");
@@ -1371,7 +1441,7 @@ cherigc_push_root(void *p)
 		if (ent == CHERIGC_ASTART || ent == CHERIGC_AMARK) {
 			isrevoked = cherigc_isrevoked_small(ce, idx);
 			if (isrevoked) {
-				cherigc_printf("(revoked so invalidating)\n");
+				cherigc_d("mark: (revoked so invalidating %p)\n", q);
 				CHERIGC_CAP_DEREF(p) =
 				    CHERIGC_PTR_CLRTAG(p);
 			}
@@ -1380,7 +1450,7 @@ cherigc_push_root(void *p)
 		/* Large object. */
 		if (ce->ce_gctype & CHERIGC_VMENT_PAGE_MARK) {
 			/* Already marked. */
-			cherigc_printf("(large) root %p already marked\n", q);
+			cherigc_dd("mark: (large) root %p already marked\n", q);
 		} else if (ce->ce_gctype & CHERIGC_VMENT_PAGE_START) {
 			/* Unmarked. */
 			ce->ce_gctype |= CHERIGC_VMENT_PAGE_MARK;
@@ -1389,7 +1459,7 @@ cherigc_push_root(void *p)
 			    &cherigc->gc_mark_stack, q, sz, 0);
 			if (rc != 0)
 				return (rc);
-			cherigc_printf("just marked (large) root %p\n", q);
+			cherigc_d("mark: just marked (large) root %p\n", q);
 		} else {
 			cherigc_assert(
 			    (ce->ce_gctype & CHERIGC_VMENT_PAGE_START) ||
@@ -1399,7 +1469,7 @@ cherigc_push_root(void *p)
 		/* Invalidate if revoked. */
 		isrevoked = ce->ce_gctype & CHERIGC_VMENT_PAGE_REVOKE;
 		if (isrevoked) {
-			cherigc_printf("(revoked so invalidating)\n");
+			cherigc_d("mark: (revoked so invalidating %p)\n", q);
 			CHERIGC_CAP_DEREF(p) = CHERIGC_PTR_CLRTAG(p);
 		}
 	}
@@ -1415,6 +1485,8 @@ cherigc_mark_all(cherigc_examine_fn *fn, void *ctx)
 	int rc;
 	uint64_t flags;
 
+	cherigc_assert(CHERIGC_ISINGC, "");
+
 	rc = cherigc_get_ts();
 	if (rc != 0)
 		return (rc);
@@ -1422,21 +1494,23 @@ cherigc_mark_all(cherigc_examine_fn *fn, void *ctx)
 	/* 1) Push the roots (registers, stack, static data, etc.). */
 
 	cherigc->gc_nmark = 0;
-	cherigc_vm_print_stats();
+	cherigc->gc_nscanned = 0;
+	cherigc->gc_nscannedbytes = 0;
+	cherigc_print_all_stats();
 
-	cherigc_printf("pushing regs (size %zu bytes)\n",
+	cherigc_d("pushing regs (size %zu bytes)\n",
 	    cherigc->gc_regs.cc_size);
 	rc = cherigc_push_roots(&cherigc->gc_regs, fn, ctx);
 	if (rc != 0)
 		return (rc);
 
-	cherigc_printf("pushing tstack (size %zu bytes)\n",
+	cherigc_d("pushing tstack (size %zu bytes)\n",
 	    cherigc->gc_tstack.cc_size);
 	rc = cherigc_push_roots(&cherigc->gc_tstack, fn, ctx);
 	if (rc != 0)
 		return (rc);
 
-	cherigc_printf("pushing stack (%p, %zu bytes)\n",
+	cherigc_d("pushing stack (%p, %zu bytes)\n",
 	    cherigc->gc_stack.cc_cap, cherigc->gc_stack.cc_size);
 	cherigc_assert(cherigc->gc_stack.cc_cap != NULL,
 	    "expected saved stack (was cherigc_vmap_update called?)");
@@ -1445,7 +1519,7 @@ cherigc_mark_all(cherigc_examine_fn *fn, void *ctx)
 		return (rc);
 	/* XXX: TODO: Static data? */
 
-	cherigc_printf("finished pushing roots (marked %zu/%zu objects)\n",
+	cherigc_d("finished pushing roots (marked %zu/%zu objects)\n",
 	    cherigc->gc_nmark, cherigc->gc_nalloc);
 
 
@@ -1458,17 +1532,19 @@ cherigc_mark_all(cherigc_examine_fn *fn, void *ctx)
 			break;
 		}
 		if (flags & CHERIGC_STACK_FL_UNMANAGED)
-			cherigc_printf("note: %p is unmanaged\n", p);
-		cherigc_printf("mark_all: stack_pop %p, %zu bytes\n", p, sz);
+			cherigc_dd("note: %p is unmanaged\n", p);
+		cherigc_dd("mark_all: stack_pop %p, %zu bytes\n", p, sz);
+		cherigc->gc_nscanned++;
+		cherigc->gc_nscannedbytes += sz;
 		rc = cherigc_mark_children(p, sz, fn, ctx);
 		if (rc != 0) {
 			cherigc_printf("mark_children failed\n");
 			return (rc);
 		}
 	}
-	cherigc_printf("finished recursive mark: marked %zu/%zu objects\n",
+	cherigc_d("finished recursive mark: marked %zu/%zu objects\n",
 	    cherigc->gc_nmark, cherigc->gc_nalloc);
-	cherigc_vm_print_stats();
+	cherigc_print_all_stats();
 
 	return (0);
 }
@@ -1541,7 +1617,7 @@ cherigc_unmanaged_mark_and_push(void *base, size_t sz)
 	if (rc != 0)
 		return (rc);
 
-	cherigc_printf("total bytes to push: %zu\n", sz);
+	cherigc_dd("total bytes to push: %zu\n", sz);
 
 	/*
 	 * Push it to the mark stack one page at a time, checking for each
@@ -1549,6 +1625,7 @@ cherigc_unmanaged_mark_and_push(void *base, size_t sz)
 	 */
 #define	CE_GOOD(ce) ((ce) != NULL && ((ce)->ce_prot & CHERIGC_PROT_RD))
 #define	UNMANAGED_PUSH(p, sz) do {					\
+		cherigc_dd("pushing %zu bytes\n", sz);			\
 		rc = cherigc_stack_push(&cherigc->gc_mark_stack, (p),	\
 		    (sz), CHERIGC_STACK_FL_UNMANAGED);			\
 		if (rc != 0)						\
@@ -1567,12 +1644,12 @@ cherigc_unmanaged_mark_and_push(void *base, size_t sz)
 
 	if (off + sz > CHERIGC_PAGESIZE) {
 		/* Pages that aren't first or last. */
-		sz -= CHERIGC_PAGESIZE;
+		sz -= max;
 		base = CHERIGC_NEXTPAGE(base);
 		for (; sz >= CHERIGC_PAGESIZE; sz -= CHERIGC_PAGESIZE) {
 			ce = cherigc_vmap_get(&cherigc->gc_cv,
 			    &cherigc->gc_cvi, base);
-			if (ce != NULL) cherigc_assert(ce->ce_addr == (uint64_t)base, "");
+			if (ce != NULL) cherigc_assert(ce->ce_addr == (uint64_t)base, "%" PRIx64 " == %" PRIx64, ce->ce_addr, (uint64_t)base);
 			if (CE_GOOD(ce))
 				UNMANAGED_PUSH(base, CHERIGC_PAGESIZE);
 			base = CHERIGC_NEXTPAGE(base);
@@ -1596,15 +1673,17 @@ cherigc_sweep(void)
 {
 	int large_freecont, small_freecont;
 
-	cherigc_printf("sweeping\n");
+	cherigc_assert(CHERIGC_ISINGC, "");
+
+	cherigc_d("sweeping\n");
 	large_freecont = 0;
 	small_freecont = 0;
 	cherigc_sweep_vmap(&cherigc->gc_cv, &cherigc->gc_cvi, 0,
 	    &large_freecont, &small_freecont);
-	cherigc_printf("finished sweep (nalloc=%zu nmark=%zu)\n",
+	cherigc_d("finished sweep (nalloc=%zu nmark=%zu)\n",
 	    cherigc->gc_nalloc, cherigc->gc_nmark);
 
-	cherigc_vm_print_stats();
+	cherigc_print_all_stats();
 }
 
 void
@@ -1631,8 +1710,7 @@ cherigc_sweep_vment(struct cherigc_vment *ce, int *large_freecont,
 					isrevoked =
 					    cherigc_isrevoked_small(ce, i);
 					if (isrevoked) {
-						cherigc_printf("TODO: free REVOKED small object %p (AND ALSO REVOKE IT DURING MARK)\n", (void *)addr);
-						/* TODO: jemalloc free */
+						cherigc_d("sweep: freeing revoked small object %p\n", (void *)addr);
 						if (!cherigc->gc_revoke_debugging) {
 							cherigc_free_small(ce, i);
 							CHERIGC_ACLRENT(
@@ -1645,14 +1723,13 @@ cherigc_sweep_vment(struct cherigc_vment *ce, int *large_freecont,
 							cherigc->gc_nrevoke--;
 						}
 					} else if (ismark) {
-						cherigc_printf("small object %p is marked, not freeing\n", (void *)addr);
+						cherigc_d("sweep: small object %p is marked, not freeing\n", (void *)addr);
 						CHERIGC_ASETSTART(
 						    &ce->ce_amap, i);
 						*small_freecont = 0;
 						cherigc->gc_nmark--;
 					} else {
-						cherigc_printf("TODO: free unmarked small object %p\n", (void *)addr);
-						/* TODO: jemalloc free */
+						cherigc_d("sweep: freeing unmarked small object %p\n", (void *)addr);
 						cherigc_free_small(ce, i);
 						CHERIGC_ACLRENT(
 						    &ce->ce_amap, i);
@@ -1681,8 +1758,7 @@ cherigc_sweep_vment(struct cherigc_vment *ce, int *large_freecont,
 		*small_freecont = 0;
 		if (ce->ce_gctype & CHERIGC_VMENT_PAGE_START) {
 			if (ce->ce_gctype & CHERIGC_VMENT_PAGE_REVOKE) {
-				cherigc_printf("TODO: free REVOKED large object %p (AND ALSO REVOKE IT DURING MARK)\n", (void *)ce->ce_addr);
-				/* TODO: jemalloc free */
+				cherigc_d("sweep: freeing revoked large object %p\n", (void *)ce->ce_addr);
 				if (!cherigc->gc_revoke_debugging) {
 					cherigc_free_large(ce);
 					ce->ce_gctype = CHERIGC_VMENT_PAGE_FREE;
@@ -1694,14 +1770,13 @@ cherigc_sweep_vment(struct cherigc_vment *ce, int *large_freecont,
 					cherigc->gc_nrevoke--;
 				}
 			} else if (ce->ce_gctype & CHERIGC_VMENT_PAGE_MARK) {
-				cherigc_printf("large object %p is marked, not freeing\n", (void *)ce->ce_addr);
+				cherigc_d("sweep: large object %p is marked, not freeing\n", (void *)ce->ce_addr);
 				ce->ce_gctype &= ~CHERIGC_VMENT_PAGE_MARK;
 				*large_freecont = 0;
 				cherigc->gc_nmark--;
 			} else {
 				/* Unmarked, unrevoked. */
-				cherigc_printf("TODO: free unmarked large object %p\n", (void *)ce->ce_addr);
-				/* TODO: jemalloc free */
+				cherigc_d("sweep: freeing unmarked large object %p\n", (void *)ce->ce_addr);
 				cherigc_free_large(ce);
 				ce->ce_gctype = CHERIGC_VMENT_PAGE_FREE;
 				*large_freecont = 1;
@@ -1754,9 +1829,13 @@ cherigc_getrefs(void *p)
 	size_t idx;
 	int rc;
 
+	cherigc_assert(!CHERIGC_ISINGC, "");
+
+	cherigc_d("cherigc_getrefs: %p\n", p);
+
 	rc = cherigc_get_object_start(p, &ce, &idx);
 	if (rc != 0) {
-		cherigc_printf("cherigc_getrefs: no such object: %p. "
+		cherigc_d("cherigc_getrefs: no such object: %p. "
 		    "Continuing and assuming this start-of-object.\n", p);
 		s.addr = (uint64_t)p;
 	} else {
@@ -1766,11 +1845,11 @@ cherigc_getrefs(void *p)
 	}
 
 	s.refs = 0;
-	rc = cherigc_mark_all(&cherigc_getrefs_cb, &s);
-	if (rc != 0)
+	rc = cherigc_collect_with_cb(&cherigc_getrefs_cb, &s);
+	if (rc != 0) {
 		return (-1);
+	}
 
-	cherigc_sweep();
 	return (s.refs);
 }
 
@@ -1794,7 +1873,7 @@ cherigc_getrefs_cb(void *objp, void *ctx)
 	if (ce->ce_gctype == CHERIGC_VMENT_PAGE_AMAP)
 		addr += CHERIGC_AMAP_ADDR(idx);
 	if (addr == s->addr) {
-		cherigc_printf("reference at %p (to: %p)\n", objp, q);
+		cherigc_d("reference at %p (to: %p)\n", objp, q);
 		s->refs++;
 	}
 }

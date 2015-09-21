@@ -23,7 +23,25 @@
  */
 #define	CHERIGC_INVALIDATE_ON_FREE
 
-#define	CHERIGC_DEBUG
+#define	CHERIGC_DEBUG	1
+
+#if CHERIGC_DEBUG >= 1
+#define	cherigc_d		cherigc_printf
+#else
+#define	cherigc_d(...)		do {} while (0)
+#endif
+
+#if CHERIGC_DEBUG >= 2
+#define	cherigc_dd		cherigc_printf
+#else
+#define	cherigc_dd(...)		do {} while (0)
+#endif
+
+#if CHERIGC_DEBUG >= 3
+#define	cherigc_ddd		cherigc_printf
+#else
+#define	cherigc_ddd(...)	do {} while (0)
+#endif
 
 #ifdef CHERIGC_DEBUG
 #define	cherigc_printf		_cherigc_printf
@@ -58,20 +76,42 @@
 struct cherigc_stats {
 	/* Current number of objects allocated. */
 	size_t		cs_nalloc;
+	/* Current number of small objects allocated. */
 	size_t		cs_nalloc_small;
+	/* Current number of large objects allocated. */
 	size_t		cs_nalloc_large;
 	/* Current number of bytes allocated. */
 	size_t		cs_nallocbytes;
-	/* Current number of objects marked. */
+	/*
+	 * Current number of objects marked (reset before collection,
+	 * decremented during sweep; can use for integrity checks).
+	 */
 	size_t		cs_nmark;
+	/*
+	 * Current number of objects revoked (zeroed after collection,
+	 * decremented during sweep).
+	 */
 	size_t		cs_nrevoke;
+	/*
+	 * Number of objects scanned during last collection (reset before
+	 * collection). Note that here, "object" means anything pushed to
+	 * the mark stack.
+	 */
+	size_t		cs_nscanned;
+	/*
+	 * Total bytes scanned during last collection (reset before
+	 * collection).
+	 */
+	size_t		cs_nscannedbytes;
 };
-#define	gc_nalloc	gc_stats.cs_nalloc
-#define	gc_nalloc_small	gc_stats.cs_nalloc_small
-#define	gc_nalloc_large	gc_stats.cs_nalloc_large
-#define	gc_nallocbytes	gc_stats.cs_nallocbytes
-#define	gc_nmark	gc_stats.cs_nmark
-#define	gc_nrevoke	gc_stats.cs_nrevoke
+#define	gc_nalloc		gc_stats.cs_nalloc
+#define	gc_nalloc_small		gc_stats.cs_nalloc_small
+#define	gc_nalloc_large		gc_stats.cs_nalloc_large
+#define	gc_nallocbytes		gc_stats.cs_nallocbytes
+#define	gc_nmark		gc_stats.cs_nmark
+#define	gc_nrevoke		gc_stats.cs_nrevoke
+#define	gc_nscanned		gc_stats.cs_nscanned
+#define	gc_nscannedbytes	gc_stats.cs_nscannedbytes
 
 struct cherigc_caps {
 	void		*cc_cap;
@@ -144,11 +184,11 @@ struct cherigc_amap {
 	    ~CHERIGC_PAGEMASK) + CHERIGC_PAGESIZE - 1))
 /* Pointer to first byte in next page. */
 #define	CHERIGC_NEXTPAGE(p)						\
-	((void *)(((uintptr_t)(p) + CHERIGC_PAGESIZE) &		\
+	((void *)(((uintptr_t)(p) + CHERIGC_PAGESIZE) &			\
 	    ~CHERIGC_PAGEMASK))
 /* Pointer to first byte in previous page. */
 #define	CHERIGC_PREVPAGE(p)						\
-	((void *)(((uintptr_t)(p) - CHERIGC_PAGESIZE) &		\
+	((void *)(((uintptr_t)(p) - CHERIGC_PAGESIZE) &			\
 	    ~CHERIGC_PAGEMASK))
 
 #define	CHERIGC_ALIGNUP(p)						\
@@ -342,6 +382,7 @@ struct cherigc {
 
 extern struct cherigc	_cherigc;
 extern struct cherigc	*cherigc;
+extern const char	*cherigc_key_str[];
 
 int			 cherigc_vmap_init(struct cherigc_vmap *_cv,
 			    struct cherigc_vidx *_ci);
@@ -366,7 +407,6 @@ void			 cherigc_vment_get_stats(struct cherigc_stats *_cs,
 void			 cherigc_vmap_get_stats(struct cherigc_stats *_cs,
 			    struct cherigc_vmap *_cv,
 			    struct cherigc_vidxs *_cvi, size_t _idx);
-void			 cherigc_vm_print_stats(void);
 
 /* Allocates amap. */
 int			 cherigc_vment_init(struct cherigc_vment *_ce);
@@ -435,6 +475,15 @@ int			 cherigc_notify_free(void *_p, int _flags);
 /* Print tracking information (useful for debugging). */
 void			 cherigc_print_tracking(void);
 
+/*
+ * Print the GC's incrementally gathered statistics and also gather
+ * statistics from the vmap entries, for integrity checking.
+ */
+void			 cherigc_print_all_stats(void);
+
+void			 cherigc_print_stats(const char *_who,
+			    struct cherigc_stats *cs);
+
 int			 cherigc_gettid(void);
 uint64_t		 cherigc_gettime(void);
 
@@ -459,23 +508,29 @@ __capability void	*cherigc_malloc(size_t _sz);
 /* Force collect. */
 int			 cherigc_collect(void);
 
-/* Lazy revoke (invalidates happen on next collection). */
-int			 cherigc_revoke(void *_p);
+/*
+ * Lazy revoke (invalidates happen on next collection). Do not expose this
+ * to untrusted sandboxes; use cherigc_revoke_cap instead.
+ */
+int			 cherigc_revoke_ptr(void *_p);
+
+/*
+ * Same as cherigc_revoke_ptr, but checks that the capability is valid
+ * first. This is what should be exposed to untrusted sandboxes, not
+ * cherigc_revoke_ptr.
+ */
+int			 cherigc_revoke_cap(__capability void *_c);
+
+#define	cherigc_revoke	cherigc_revoke_cap
 
 /* Configure the collector. See cherigc_ctl.h. */
 int			 cherigc_ctl(int _cmd, int _key, void *_val);
 
 /*
- * Marking API.
- *
- * mark_all: Call a function on every reachable object. The internal
- * state of the collector is changed (mark bits are set to keep track of
- * visited objects). During a collection, this function is used internally
- * with a NULL callback to simply mark the objects. Externally, it is
- * expected to be used for debugging or checking.
- *
- * Note that it's probably a good idea to call cherigc_sweep() after
- * calling this, in order to reset the state of the mark bits.
+ * collect_with_cb: Perform a collection, calling a function on every
+ * reachable object during the mark phase, and then sweeping. Internally,
+ * it is used directly by gc_collect with a NULL callback. Externally, it
+ * is expected to be used for debugging or checking.
  *
  * The callback is called for every object before the object is marked or
  * pushed to the mark stack. The arguments passed to the callback are:
@@ -487,10 +542,12 @@ int			 cherigc_ctl(int _cmd, int _key, void *_val);
  * ctx: unmodified context as passed to cherigc_examine_reachable.
  */
 typedef void		 cherigc_examine_fn(void *_objp, void *_ctx);
-int			 cherigc_mark_all(cherigc_examine_fn *_fn,
+int			 cherigc_collect_with_cb(cherigc_examine_fn *_fn,
 			    void *_ctx);
 /* Collection helpers. */
 /* Marking. */
+int			 cherigc_mark_all(cherigc_examine_fn *_fn,
+			    void *_ctx);
 int			 cherigc_push_roots(struct cherigc_caps *_cc,
 			    cherigc_examine_fn *_fn, void *_ctx);
 int			 cherigc_push_roots_stk(struct cherigc_stack *_cs,
