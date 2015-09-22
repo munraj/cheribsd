@@ -23,7 +23,14 @@
  */
 #define	CHERIGC_INVALIDATE_ON_FREE
 
-#define	CHERIGC_DEBUG	1
+//#define	CHERIGC_DEBUG	1
+#undef	CHERIGC_DEBUG
+
+#define	cherigc_printf		_cherigc_printf
+//#define	cherigc_printf(...)	do {} while (0)
+
+//#define	cherigc_vm_printf	cherigc_printf
+#define	cherigc_vm_printf(...)	do {} while (0)
 
 #if CHERIGC_DEBUG >= 1
 #define	cherigc_d		cherigc_printf
@@ -44,14 +51,12 @@
 #endif
 
 #ifdef CHERIGC_DEBUG
-#define	cherigc_printf		_cherigc_printf
 #define	cherigc_time_printf	_cherigc_time_printf
 #define	cherigc_assert(x, ...)						\
 	_cherigc_assert((int)(x), #x, __FILE__, __LINE__, __VA_ARGS__)
 #else
-#define	cherigc_printf(...)	do {} while (0)
 #define	cherigc_time_printf(...)	do {} while (0)
-#define	_cherigc_assert(...)	do {} while (0)
+#define	cherigc_assert(x, ...)	do {(void)(x);} while (0)
 #endif
 
 #if __has_feature(capabilities)
@@ -73,6 +78,10 @@
 #include <machine/cheric.h>
 #endif
 
+/*
+ * Note: this structure is not opaque and users may access its fields
+ * directly. It is used as a return value in cherigc_ctl.
+ */
 struct cherigc_stats {
 	/* Current number of objects allocated. */
 	size_t		cs_nalloc;
@@ -103,6 +112,25 @@ struct cherigc_stats {
 	 * collection).
 	 */
 	size_t		cs_nscannedbytes;
+	/* Total number of collections performed (never reset). */
+	size_t		cs_ncollect;
+	/* Total time spent in the collector (never reset). */
+	uint64_t	cs_pausetime;
+	/*
+	 * Total time spent in the collector due to malloc() notifications
+	 * (never reset).
+	 */
+	uint64_t	cs_alloc_pausetime;
+	/*
+	 * Total time spent in the collector due to free() notifications
+	 * (never reset).
+	 */
+	uint64_t	cs_free_pausetime;
+	/*
+	 * Total time spent in the collector due to collections (never
+	 * reset).
+	 */
+	uint64_t	cs_collect_pausetime;
 };
 #define	gc_nalloc		gc_stats.cs_nalloc
 #define	gc_nalloc_small		gc_stats.cs_nalloc_small
@@ -112,6 +140,11 @@ struct cherigc_stats {
 #define	gc_nrevoke		gc_stats.cs_nrevoke
 #define	gc_nscanned		gc_stats.cs_nscanned
 #define	gc_nscannedbytes	gc_stats.cs_nscannedbytes
+#define	gc_ncollect		gc_stats.cs_ncollect
+#define	gc_pausetime		gc_stats.cs_pausetime
+#define	gc_alloc_pausetime	gc_stats.cs_alloc_pausetime
+#define	gc_free_pausetime	gc_stats.cs_free_pausetime
+#define	gc_collect_pausetime	gc_stats.cs_collect_pausetime
 
 struct cherigc_caps {
 	void		*cc_cap;
@@ -357,8 +390,6 @@ struct cherigc {
 	struct cherigc_stats	gc_stats;
 	/* If set, we are inside the collector; ignore notify_allocs. */
 	int			gc_ingc;
-	/* Total time spent in the collector. */
-	uint64_t		gc_pausetime;
 	/* See cherigc_ctl(). */
 	int			gc_revoke_debugging;
 	int			gc_ignore;

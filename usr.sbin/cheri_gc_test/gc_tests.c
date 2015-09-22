@@ -285,6 +285,19 @@ mklist(int size)
 	return (n);
 }
 
+static __capability void * __capability *
+mkarray(int size)
+{
+	__capability void * __capability *a;
+	int i;
+
+	a = (__capability void * __capability *)malloc_wrapped(size * sizeof(*a));
+	for (i = 0; i < size; i++)
+		a[i] = malloc_wrapped(64);
+
+	return (a);
+}
+
 static int
 chklist(__capability struct node *n, int size)
 {
@@ -373,10 +386,12 @@ do_linked_list_test(void)
 static int
 do_revoke_test(void)
 {
-#define	REVOKE_BUFSZ		100
-#define	REVOKE_TREEDEPTH	5
+//#define	REVOKE_ARRAYSZ		1000
+//#define	REVOKE_TREEDEPTH	10
+#define	REVOKE_ARRAYSZ		10000
+#define	REVOKE_TREEDEPTH	10
 #define	REVOKE_LISTSZ		10
-	__capability void *buf[REVOKE_BUFSZ];
+	__capability void * __capability *a;
 	__capability void *tohide;
 	__capability void *n;
 	__capability void *l;
@@ -389,11 +404,14 @@ do_revoke_test(void)
 	size_t i;
 	int v, rc, refs, val;
 
-	printf("revoke test: allocating some stuff...\n");
-	for (i = 0; i < REVOKE_BUFSZ; i++)
-		buf[i] = malloc_wrapped(i * 500);
+	/*printf("revoke test: &n is %p, base=%lx, offset=%lx\n", &n, cheri_getbase(&n), cheri_getoffset(&n));
+	a=(__capability void*)&n;cherigc_revoke(a);
+	n=(__capability void*)malloc(100);printf("revoke test: malloc(100) is base=%lx, offset=%lx\n", cheri_getbase(n), cheri_getoffset(n));*/
 
-	tohide = buf[REVOKE_BUFSZ / 2];
+	printf("revoke test: mkarray\n");
+	a = mkarray(REVOKE_ARRAYSZ);
+
+	tohide = a[REVOKE_ARRAYSZ / 2];
 
 	/* Save address of hidden capability for checking later. */
 	t = tohide;
@@ -437,7 +455,7 @@ do_revoke_test(void)
 
 	/* Clear away obvious roots. */
 #define CLR_ROOTS							\
-	c0 = mkcap((void *)0, 0);					\
+	c0 = mkcap((void *)1, 1);					\
 	c1 = mkcap((void *)1, 1);					\
 	c2 = mkcap((void *)2, 2);					\
 	c3 = mkcap((void *)3, 3);					\
@@ -502,6 +520,38 @@ do_revoke_test(void)
 	printf("%p\n", (void *)c30);					\
 	printf("%p\n", (void *)c31);
 	CLR_ROOTS
+	(void)c0;
+	(void)c1;
+	(void)c2;
+	(void)c3;
+	(void)c4;
+	(void)c5;
+	(void)c6;
+	(void)c7;
+	(void)c8;
+	(void)c9;
+	(void)c10;
+	(void)c11;
+	(void)c12;
+	(void)c13;
+	(void)c14;
+	(void)c15;
+	(void)c16;
+	(void)c17;
+	(void)c18;
+	(void)c19;
+	(void)c20;
+	(void)c21;
+	(void)c22;
+	(void)c23;
+	(void)c24;
+	(void)c25;
+	(void)c26;
+	(void)c27;
+	(void)c28;
+	(void)c29;
+	(void)c30;
+	(void)c31;
 
 	/*
 	 * Count existing refs. Should have at least three (array, bintree,
@@ -512,8 +562,8 @@ do_revoke_test(void)
 	if (refs < 3) {
 		printf("ERROR: <3 refs (%d)\n", refs);
 		return (-1);
-	} else if (refs > 6) {
-		printf("ERROR: >6 refs (%d)\n", refs);
+	} else if (refs > 10) {
+		printf("ERROR: >10 refs (%d)\n", refs);
 		return (-1);
 	}
 	printf("for %" PRIx64 ", %d refs\n", addr, refs);
@@ -565,6 +615,11 @@ do_revoke_test(void)
 	 * Check that the root of the tree is still around, and the
 	 * root of the linked list.
 	 */
+	printf("revoke test: gettag tree\n");
+	if (!cheri_gettag(n)) {
+		printf("ERROR: bintree node gone! no tag!\n");
+		return (-1);
+	}
 	printf("revoke test: getrefs tree\n");
 	refs = cherigc_getrefs_uint64(cheri_getbase(n));
 	if (refs <= 0) {
@@ -572,6 +627,12 @@ do_revoke_test(void)
 		return (-1);
 	}
 	printf("revoke test: %d refs to bintree root\n", refs);
+
+	printf("revoke test: gettag list\n");
+	if (!cheri_gettag(l)) {
+		printf("ERROR: linked list head gone! no tag!\n");
+		return (-1);
+	}
 	printf("revoke test: getrefs list\n");
 	refs = cherigc_getrefs_uint64(cheri_getbase(l));
 	if (refs <= 0) {

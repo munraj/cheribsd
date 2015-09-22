@@ -19,9 +19,6 @@
  * IGNORE r/w (int *val, def = 0):
  * When non-zero, any new allocations will be ignored by the collector.
  *
- * NALLOC r/o (size_t *val):
- * The current number of managed objects.
- *
  * REVOKE_DEBUGGING r/w (int *val, def = 0):
  * If set, revoked objects will remain allocated (and not have free()
  * called on them) in the tables, but still invalidated as normal. Useful
@@ -39,13 +36,19 @@
  * STATS_INCREMENTAL r/o (struct cherigc_stats *cs):
  * Retrieve incremental statistics that the GC has gathered. See also
  * STATS_FULL.
+ * NOTE: If you can't decide between STATS_INCREMENTAL and STATS_FULL, you
+ * probably want STATS_INCREMENTAL.
  *
  * STATS_FULL r/o (struct cherigc_stats *cs):
  * Retrieve the statistics as stored in the VM tables. Can be used for
  * integrity checking: if both STATS_FULL and STATS_INCREMENTAL do not
  * return the same result, there's likely a bug in the collector. (This may
  * not apply if some debugging features are in use; for example, the revoke
- * counts may be different if REVOKE_DEBUGGING is set.)
+ * counts may be different if REVOKE_DEBUGGING is set. It also does not
+ * apply for statistics that don't make sense for STATS_FULL, like pause
+ * times).
+ * NOTE: If you can't decide between STATS_INCREMENTAL and STATS_FULL, you
+ * probably want STATS_INCREMENTAL.
  */
 
 #define	CHERIGC_CTL_GET			0
@@ -53,16 +56,17 @@
 
 #define	X_CHERIGC_KEY							\
 	X(CHERIGC_KEY_IGNORE,			0)			\
-	X(CHERIGC_KEY_NALLOC,			1)			\
-	X(CHERIGC_KEY_REVOKE_DEBUGGING,		2)			\
-	X(CHERIGC_KEY_TRACK_UNMANAGED,		3)			\
-	X(CHERIGC_KEY_STATS_INCREMENTAL,	4)			\
-	X(CHERIGC_KEY_STATS_FULL,		5)
+	X(CHERIGC_KEY_REVOKE_DEBUGGING,		1)			\
+	X(CHERIGC_KEY_TRACK_UNMANAGED,		2)			\
+	X(CHERIGC_KEY_STATS_INCREMENTAL,	3)			\
+	X(CHERIGC_KEY_STATS_FULL,		4)
 
 enum cherigc_key_enum {
 #define	X(c, n)	c = n,
 	X_CHERIGC_KEY
 #undef	X
 };
+
+#define	PRIgc_time	PRIu64 " ms"
 
 #endif /* !_CHERIGC_CTL_H_ */

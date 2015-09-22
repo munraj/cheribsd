@@ -100,7 +100,9 @@ cheri_gc_object_malloc(size_t size, __capability const char *file,
     int line)
 {
 
+#ifdef CHERIGC_DEBUG
 	fprintf(stderr, "cheri_gc_object_malloc called\n");
+#endif
 	return (malloc_wrapped2(size, (const void *)file, line));
 }
 
@@ -140,7 +142,9 @@ int
 cheri_gc_object_revoke(__capability void *p)
 {
 
-	fprintf(stderr, "cheri_gc_object_revoke called\n");
+	fprintf(stderr, "cheri_gc_object_revoke called with "
+	    "base=%lx, offset=%lx\n", cheri_getbase(p),
+	    cheri_getoffset(p));
 	return (cherigc_revoke(p));
 }
 
@@ -163,7 +167,11 @@ malloc_wrapped2(size_t size, const char *file, int line)
 		exit(1);
 	}
 
+#ifdef CHERIGC_DEBUG
 	printf("malloc_wrapped2: %p @ %s:%d\n", p, file, line);
+#endif
+	(void)file;
+	(void)line;
 
 	c = cheri_ptr(p, size);
 
@@ -252,13 +260,14 @@ do_libcheri_init(void)
 
 #define	mkcap				cheri_ptr
 #define	cherigc_getrefs_uint64(addr)	cherigc_getrefs((void *)(addr))
-#define	TAGGED_HASHES
+//#define	TAGGED_HASHES
+#undef	TAGGED_HASHES
 #include "gc_tests.c"
 
 static int
 do_sandbox_test(void)
 {
-	size_t sval;
+	struct cherigc_stats stats;
 	int rc, val;
 
 	/* Disable collection for libcheri allocations (treat these
@@ -290,12 +299,13 @@ do_sandbox_test(void)
 	    cheri_gc);
 	printf("rc from invoke_helper: %d\n", rc);
 
-	rc = cherigc_ctl(CHERIGC_CTL_GET, CHERIGC_KEY_NALLOC, &sval);
+	rc = cherigc_ctl(CHERIGC_CTL_GET, CHERIGC_KEY_STATS_INCREMENTAL,
+	    &stats);
 	if (rc != 0) {
 		fprintf(stderr, "cherigc_ctl: %d\n", rc);
 		return (rc);
 	}
-	printf("nalloc: %zu\n", sval);
+	printf("nalloc: %zu\n", stats.cs_nalloc);
 
 	return (0);
 }
@@ -304,10 +314,10 @@ int
 main(void)
 {
 
-	(void)do_sandbox_test();
+	(void)do_sandbox_test;
 	(void)do_bintree_test;
 	(void)do_linked_list_test;
-	(void)do_revoke_test;
+	(void)do_revoke_test();
 
 	return (0);
 }
