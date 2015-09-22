@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+/* Disable everything (useful for testing against a baseline). */
+//#define	CHERIGC_DISABLE
+
 /* Configurable fixed-size revoke list stack (in bytes). */
 #define	CHERIGC_REVOKE_LIST_SIZE	CHERIGC_PAGESIZE
 
@@ -23,8 +26,8 @@
  */
 #define	CHERIGC_INVALIDATE_ON_FREE
 
-//#define	CHERIGC_DEBUG	1
-#undef	CHERIGC_DEBUG
+#define	CHERIGC_DEBUG	1
+//#undef	CHERIGC_DEBUG
 
 #define	cherigc_printf		_cherigc_printf
 //#define	cherigc_printf(...)	do {} while (0)
@@ -154,7 +157,7 @@ struct cherigc_caps {
 struct cherigc_stack_entry {
 	void		*cse_ptr;
 	size_t		cse_size;
-	uint64_t	cse_flags;
+	/*uint64_t	cse_flags;*/
 };
 
 #define	CHERIGC_STACK_FL_UNMANAGED	1

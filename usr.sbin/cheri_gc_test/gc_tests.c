@@ -285,6 +285,29 @@ mklist(int size)
 	return (n);
 }
 
+static __capability struct node *
+mklonglist(int size)
+{
+	__capability struct node *n, *p;
+	int i;
+
+	p = NULL;
+	for (i = 0; i < size; i++) {
+		n = malloc_wrapped(i + sizeof(*n));
+		n = malloc_wrapped(i + sizeof(*n));
+		n = malloc_wrapped(i + sizeof(*n));
+		n->v = i;
+		n->l = malloc_wrapped(i);
+		n->r = malloc_wrapped(i);
+		n->l = p;
+		n->r = p;
+		n->hash = mkhash(n);
+		p = n;
+	}
+
+	return (n);
+}
+
 static __capability void * __capability *
 mkarray(int size)
 {
@@ -386,11 +409,12 @@ do_linked_list_test(void)
 static int
 do_revoke_test(void)
 {
-//#define	REVOKE_ARRAYSZ		1000
-//#define	REVOKE_TREEDEPTH	10
-#define	REVOKE_ARRAYSZ		10000
+/*#define	REVOKE_ARRAYSZ		100000
 #define	REVOKE_TREEDEPTH	10
-#define	REVOKE_LISTSZ		10
+#define	REVOKE_LISTSZ		10000*/
+#define	REVOKE_ARRAYSZ		1000
+#define	REVOKE_TREEDEPTH	10
+#define	REVOKE_LISTSZ		1000
 	__capability void * __capability *a;
 	__capability void *tohide;
 	__capability void *n;
@@ -443,7 +467,7 @@ do_revoke_test(void)
 
 	/* Hide in a linked list. */
 	printf("revoke test: mklist\n");
-	l = mklist(REVOKE_LISTSZ);
+	l = mklonglist(REVOKE_LISTSZ);
 	t = l;
 	for (i = 0; i < REVOKE_LISTSZ / 2; i++) {
 		(void)malloc_wrapped(i);

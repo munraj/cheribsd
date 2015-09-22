@@ -905,6 +905,10 @@ cherigc_notify_alloc(void *p, size_t sz, int flags)
 	size_t aidx, i, len, end, max, acsz;
 	uint64_t before, after, diff;
 
+#ifdef CHERIGC_DISABLE
+	return;
+#endif
+
 	(void)flags;
 
 	acsz = 0;
@@ -1038,6 +1042,9 @@ cherigc_notify_free(void *p, int flags)
 	int rc;
 	uint64_t before, after, diff;
 
+#ifdef CHERIGC_DISABLE
+	return (CHERIGC_FREE_NOW);
+#endif
 	(void)flags;
 
 	if (!cherigc_initialized)
@@ -1117,6 +1124,10 @@ cherigc_collect_with_cb(cherigc_examine_fn *fn, void *ctx)
 	int rc;
 	uint64_t before, after, diff;
 
+#ifdef CHERIGC_DISABLE
+	return (0);
+#endif
+
 	cherigc_assert(!CHERIGC_ISINGC, "");
 
 	CHERIGC_ENTERGC;
@@ -1160,6 +1171,10 @@ cherigc_revoke_ptr(void *p)
 	void *q;
 	size_t idx, sz;
 	int rc;
+
+#ifdef CHERIGC_DISABLE
+	return (0);
+#endif
 
 	cherigc_d("cherigc_revoke_ptr: %p\n", p);
 
@@ -1210,6 +1225,10 @@ int
 cherigc_ctl(int cmd, int key, void *val)
 {
 	int iswrite;
+
+#ifdef CHERIGC_DISABLE
+	return (0);
+#endif
 
 	iswrite = 0;
 #define	KEY_RW(var, type) do {						\
@@ -1326,7 +1345,7 @@ cherigc_stack_pop(struct cherigc_stack *cs, void **p, size_t *sz,
 	cs->cs_idx--;
 	*p = cs->cs_stack[cs->cs_idx].cse_ptr;
 	*sz = cs->cs_stack[cs->cs_idx].cse_size;
-	*flags = cs->cs_stack[cs->cs_idx].cse_flags;
+	/**flags = cs->cs_stack[cs->cs_idx].cse_flags;*/cherigc_assert(flags == NULL, "");
 	return (0);
 }
 
@@ -1354,7 +1373,7 @@ cherigc_stack_push(struct cherigc_stack *cs, void *p, size_t sz,
 
 	cs->cs_stack[cs->cs_idx].cse_ptr = p;
 	cs->cs_stack[cs->cs_idx].cse_size = sz;
-	cs->cs_stack[cs->cs_idx].cse_flags = flags;
+	/*cs->cs_stack[cs->cs_idx].cse_flags = flags;*/(void)flags;
 	cs->cs_idx++;
 
 	return (0);
@@ -1545,13 +1564,13 @@ cherigc_mark_all(cherigc_examine_fn *fn, void *ctx)
 	/* 2) Recursive mark. */
 	for (;;) {
 		rc = cherigc_stack_pop(&cherigc->gc_mark_stack, &p, &sz,
-		    &flags);
+		    NULL/*&flags*/);(void)flags;
 		if (rc != 0) {
 			/* Mark stack empty. */
 			break;
 		}
-		if (flags & CHERIGC_STACK_FL_UNMANAGED)
-			cherigc_dd("note: %p is unmanaged\n", p);
+		/*if (flags & CHERIGC_STACK_FL_UNMANAGED)
+			cherigc_dd("note: %p is unmanaged\n", p);*/
 		cherigc_dd("mark_all: stack_pop %p, %zu bytes\n", p, sz);
 		cherigc->gc_nscanned++;
 		cherigc->gc_nscannedbytes += sz;
@@ -1847,6 +1866,10 @@ cherigc_getrefs(void *p)
 	struct cherigc_vment *ce;
 	size_t idx;
 	int rc;
+
+#ifdef CHERIGC_DISABLE
+	return (0);
+#endif
 
 	cherigc_assert(!CHERIGC_ISINGC, "");
 
